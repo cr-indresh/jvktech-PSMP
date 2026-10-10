@@ -1,0 +1,809 @@
+{% extends 'tracker/base.html' %}
+{# ================================================================== #}
+{#  accounts_dashboard.html -- Accounts workspace (PSMP / FTSD):       #}
+{#    - Payment clearing queue: Pending + Rejected rows with async     #}
+{#      fetch() Verify / Reject / Revert actions (no page reload).     #}
+{#    - Verified history with revert action.                           #}
+{#    - Publication lifecycle table + Tailwind modal for the 7-stage   #}
+{#      status, links AND the acceptance-proof upload (multipart).     #}
+{#  Accounts can never alter sale values — that form field simply      #}
+{#  does not exist in this workflow.                                   #}
+{# ================================================================== #}
+{% load humanize %}
+{% block title %}Accounts Dashboard{% endblock %}
+
+{% block content %}
+{# ================= Page header ================= #}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold tracking-tight text-slate-900">Accounts Dashboard</h1>
+  <p class="mt-1 text-sm text-slate-500">Clear payment proofs against the bank feeds, track collections and drive the publication lifecycle.</p>
+</div>
+
+{# ================= Admin power banner ================= #}
+{# Whatever the Accounts role can do, the admin can do from this page: #}
+{# the action buttons render AND the JSON endpoints accept ADMIN.      #}
+{% if app_role == 'ADMIN' %}
+<div class="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 shadow-sm" role="status">
+  {% include 'tracker/_icon.html' with name='shield' cls='h-4.5 w-4.5 shrink-0 text-emerald-600' %}
+  <p class="min-w-0 flex-1"><span class="font-semibold">Administrator access</span> — you hold every Accounts action: verify, reject or revert payments and update publication status right from this page.</p>
+  <a href="{% url 'tracker:audit_log' %}{{ qp }}" class="font-semibold text-emerald-800 underline decoration-emerald-400 underline-offset-2 hover:text-emerald-900">Audit trail</a>
+</div>
+{% endif %}
+
+{# ================= KPI cards (updated live by JS) ================= #}
+<div id="overview" class="mb-8 grid grid-cols-2 gap-4 scroll-mt-24 lg:grid-cols-4">
+  <div class="card flex items-start gap-4 p-5">
+    <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-100 text-amber-700">{% include 'tracker/_icon.html' with name='clock' %}</span>
+    <div class="min-w-0">
+      <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Pending verifications</p>
+      <p class="text-2xl font-bold tracking-tight text-slate-900" id="stat-pending-count">{{ stats.pending_count }}</p>
+      <p class="truncate text-xs text-slate-500" id="stat-rejected-count">{{ stats.rejected_count }} rejected</p>
+    </div>
+  </div>
+  <div class="card flex items-start gap-4 p-5">
+    <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-100 text-amber-700">{% include 'tracker/_icon.html' with name='banknote' %}</span>
+    <div class="min-w-0">
+      <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Pending amount</p>
+      <p class="truncate text-2xl font-bold tracking-tight text-slate-900" id="stat-pending-amount">₹{{ stats.pending_amount|floatformat:0|intcomma }}</p>
+      <p class="truncate text-xs text-slate-500" id="stat-rejected-amount">₹{{ stats.rejected_amount|floatformat:0|intcomma }} rejected</p>
+    </div>
+  </div>
+  <div class="card flex items-start gap-4 p-5">
+    <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">{% include 'tracker/_icon.html' with name='check-circle' %}</span>
+    <div class="min-w-0">
+      <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Verified to date</p>
+      <p class="truncate text-2xl font-bold tracking-tight text-slate-900" id="stat-verified-amount">₹{{ stats.verified_amount|floatformat:0|intcomma }}</p>
+      <p class="text-xs text-slate-500" id="stat-verified-count">{{ stats.verified_count }} installments</p>
+    </div>
+  </div>
+  <div class="card flex items-start gap-4 p-5">
+    <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-teal-100 text-teal-700">{% include 'tracker/_icon.html' with name='badge-check' %}</span>
+    <div class="min-w-0">
+      <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Published projects</p>
+      <p class="text-2xl font-bold tracking-tight text-slate-900" id="stat-published-count">{{ stats.published_count }}</p>
+    </div>
+  </div>
+</div>
+
+{# ================= Payment clearing queue (Pending + Rejected) ================= #}
+<section id="pending-payments" class="card mb-8 scroll-mt-24 overflow-hidden">
+  <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-5">
+    <div>
+      <h2 class="flex items-center gap-2 text-lg font-bold tracking-tight text-slate-900">
+        {% include 'tracker/_icon.html' with name='receipt' cls='h-5 w-5 text-amber-600' %} Payment clearing queue
+      </h2>
+      <p class="mt-0.5 text-sm text-slate-500">Click “View” on a proof photo to inspect the BDE's transaction screenshot, then “Verify” once it matches the bank feed — or “Reject” to bounce it back.</p>
+    </div>
+    <span class="badge bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-600/20">{{ stats.pending_count }} pending · {{ stats.rejected_count }} rejected</span>
+  </div>
+
+  <div class="max-h-[420px] overflow-auto scroll-thin">
+    <table class="min-w-full divide-y divide-slate-200">
+      <thead class="sticky top-0 z-10 bg-slate-50">
+        <tr>
+          <th class="th">Project</th>
+          <th class="th">BDE</th>
+          <th class="th">Paid by</th>
+          <th class="th">Phase</th>
+          <th class="th">Amount (₹)</th>
+          <th class="th">Transaction ref (UTR)</th>
+          <th class="th">Mode / date</th>
+          <th class="th">Proof</th>
+          <th class="th">Action</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100 bg-white" id="pending-tbody">
+        {% for inst in pending_installments %}
+        <tr data-installment-row="{{ inst.pk }}" {% if inst.verification_status == 'REJECTED' %}class="bg-rose-50/40"{% endif %}>
+          <td class="td min-w-[160px] max-w-[260px]">
+            <a href="{% url 'tracker:project_detail' inst.project.pk %}{{ qp }}" class="block truncate font-semibold text-slate-800 hover:text-emerald-700 hover:underline" title="{{ inst.project.title }}">{{ inst.project.title }}</a>
+            <p class="mt-0.5 truncate text-xs text-slate-500" title="{{ inst.project.service_type.name }}">{{ inst.project.service_type.name }}</p>
+            {% if inst.verification_status == 'REJECTED' %}
+            <p class="mt-0.5 text-[11px] font-semibold text-rose-600">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3 w-3 inline align-[-2px]' %} Rejected{% if inst.remarks %} — {{ inst.remarks }}{% endif %}</p>
+            {% endif %}
+          </td>
+          <td class="td text-xs text-slate-600">{{ inst.project.bde.get_full_name|default:inst.project.bde.username }}</td>
+          <td class="td">
+            {# Authors pay individually -- every payment row names its payer #}
+            {% if inst.author %}
+            <p class="max-w-[140px] truncate text-sm font-medium text-slate-800" title="{{ inst.author.name }} ({{ inst.author.position_label }})">{{ inst.author.name }}</p>
+            <p class="text-[10px] font-medium text-slate-400">{{ inst.author.position_label }}</p>
+            {% else %}
+            <span class="text-xs italic text-slate-400">Not linked</span>
+            {% endif %}
+          </td>
+          <td class="td">
+            <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">{{ inst.get_payment_type_display }}</span>
+            <p class="mt-0.5 text-[10px] font-medium text-slate-400" title="Database entry ID">Entry ID {{ inst.pk }}</p>
+          </td>
+          <td class="td font-semibold text-slate-900">₹{{ inst.amount_paid|floatformat:0|intcomma }}</td>
+          <td class="td font-mono text-xs text-slate-600">{{ inst.transaction_ref }}</td>
+          <td class="td text-xs text-slate-600">
+            <p>{{ inst.get_payment_mode_display }}</p>
+            {% if inst.payment_date %}<p class="text-slate-400">{{ inst.payment_date|date:"d M Y" }}</p>{% endif %}
+          </td>
+          <td class="td">
+            {% if inst.has_proof %}
+            <button type="button"
+                    class="proof-view-btn inline-flex h-9 items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-2.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400"
+                    data-proof-url="{% url 'tracker:installment_proof_file' inst.pk %}{{ qp }}"
+                    data-proof-name="{{ inst.proof_file_name }}"
+                    data-proof-image="{{ inst.proof_is_image|yesno:'true,false' }}"
+                    data-project="{{ inst.project.title|escape }}"
+                    data-txn="{{ inst.transaction_ref|escape }}"
+                    data-author="{{ inst.author.name|default_if_none:''|escape }}"
+                    data-bde="{{ inst.project.bde.get_full_name|default:inst.project.bde.username|escape }}"
+                    data-type="{{ inst.get_payment_type_display }}"
+                    data-amount="₹{{ inst.amount_paid|floatformat:0|intcomma }}"
+                    aria-label="View payment proof for {{ inst.transaction_ref|escape }}"
+                    title="View payment proof">
+              {% include 'tracker/_icon.html' with name='image' cls='h-4 w-4' %} View
+            </button>
+            {% else %}
+            <span class="inline-flex items-center gap-1 text-xs italic text-slate-400" title="No proof photo attached">{% include 'tracker/_icon.html' with name='image' cls='h-3.5 w-3.5 text-slate-300' %} None</span>
+            {% endif %}
+          </td>
+          <td class="td">
+            {% if viewer_is_accounts %}
+            <div class="flex items-center gap-1.5">
+              <button type="button"
+                      class="clear-btn btn-primary px-3 py-2 text-xs"
+                      data-url="{% url 'tracker:set_verification' inst.pk %}{{ qp }}"
+                      data-action="verify"
+                      data-id="{{ inst.pk }}">
+                {% include 'tracker/_icon.html' with name='check-circle' cls='h-4 w-4' %} Verify
+              </button>
+              {% if inst.verification_status == 'PENDING' %}
+              <button type="button"
+                      class="clear-btn inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs font-semibold text-rose-700 shadow-sm transition hover:bg-rose-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+                      data-url="{% url 'tracker:set_verification' inst.pk %}{{ qp }}"
+                      data-action="reject"
+                      data-id="{{ inst.pk }}">
+                {% include 'tracker/_icon.html' with name='x-circle' cls='h-4 w-4' %} Reject
+              </button>
+              {% endif %}
+            </div>
+            {% else %}
+            <span class="text-xs italic text-slate-400">Accounts only</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr data-empty-row>
+          <td colspan="9" class="px-6 py-12 text-center">
+            {% include 'tracker/_icon.html' with name='check-circle' cls='mx-auto h-8 w-8 text-emerald-400' %}
+            <p class="mt-2 text-sm font-medium text-slate-500">All caught up — nothing pending or rejected.</p>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{# ================= Verified history ================= #}
+<section id="verified-payments" class="card mb-8 scroll-mt-24 overflow-hidden">
+  <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-5">
+    <div>
+      <h2 class="flex items-center gap-2 text-lg font-bold tracking-tight text-slate-900">
+        {% include 'tracker/_icon.html' with name='check-circle' cls='h-5 w-5 text-emerald-600' %} Verified installments
+      </h2>
+      <p class="mt-0.5 text-sm text-slate-500">Latest 50 — reverting re-queues the proof as Pending (the approval flow that unlocks a BDE edit).</p>
+    </div>
+    <span class="badge bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-600/20">{{ stats.verified_count }} verified</span>
+  </div>
+
+  <div class="max-h-[360px] overflow-auto scroll-thin">
+    <table class="min-w-full divide-y divide-slate-200">
+      <thead class="sticky top-0 z-10 bg-slate-50">
+        <tr>
+          <th class="th">Project</th>
+          <th class="th">BDE</th>
+          <th class="th">Paid by</th>
+          <th class="th">Phase</th>
+          <th class="th">Amount (₹)</th>
+          <th class="th">Transaction ref (UTR)</th>
+          <th class="th">Mode / date</th>
+          <th class="th">Verified by</th>
+          <th class="th">Verified at</th>
+          <th class="th">Action</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100 bg-white" id="verified-tbody">
+        {% for inst in verified_installments %}
+        <tr data-installment-row="{{ inst.pk }}">
+          <td class="td min-w-[160px] max-w-[240px]">
+            <a href="{% url 'tracker:project_detail' inst.project.pk %}{{ qp }}" class="block truncate font-semibold text-slate-800 hover:text-emerald-700 hover:underline" title="{{ inst.project.title }}">{{ inst.project.title }}</a>
+          </td>
+          <td class="td text-xs text-slate-600">{{ inst.project.bde.get_full_name|default:inst.project.bde.username }}</td>
+          <td class="td">
+            {# The paying author (authors pay individually) #}
+            {% if inst.author %}
+            <p class="max-w-[140px] truncate text-sm font-medium text-slate-800" title="{{ inst.author.name }} ({{ inst.author.position_label }})">{{ inst.author.name }}</p>
+            <p class="text-[10px] font-medium text-slate-400">{{ inst.author.position_label }}</p>
+            {% else %}
+            <span class="text-xs italic text-slate-400">Not linked</span>
+            {% endif %}
+          </td>
+          <td class="td">
+            <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">{{ inst.get_payment_type_display }}</span>
+            <p class="mt-0.5 text-[10px] font-medium text-slate-400" title="Database entry ID">Entry ID {{ inst.pk }}</p>
+          </td>
+          <td class="td font-semibold text-slate-900">₹{{ inst.amount_paid|floatformat:0|intcomma }}</td>
+          <td class="td font-mono text-xs text-slate-600">{{ inst.transaction_ref }}</td>
+          <td class="td text-xs text-slate-600">
+            <p>{{ inst.get_payment_mode_display }}</p>
+            {% if inst.payment_date %}<p class="text-slate-400">{{ inst.payment_date|date:"d M Y" }}</p>{% endif %}
+          </td>
+          <td class="td text-xs text-slate-600">{{ inst.verified_by.get_full_name|default:inst.verified_by.username }}</td>
+          <td class="td text-xs text-slate-500">{{ inst.verification_date|date:"d M Y, H:i" }}</td>
+          <td class="td">
+            {% if viewer_is_accounts %}
+            <button type="button"
+                    class="clear-btn btn-secondary px-3 py-2 text-xs"
+                    data-url="{% url 'tracker:set_verification' inst.pk %}{{ qp }}"
+                    data-action="revert"
+                    data-id="{{ inst.pk }}">
+              {% include 'tracker/_icon.html' with name='refresh-cw' cls='h-4 w-4' %} Revert
+            </button>
+            {% else %}
+            <span class="text-xs italic text-slate-400">Accounts only</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr data-empty-row>
+          <td colspan="10" class="px-6 py-12 text-center">
+            <p class="text-sm font-medium text-slate-500">Nothing verified yet.</p>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{# ================= Publication lifecycle / links ================= #}
+<section id="publication-status" class="card scroll-mt-24 overflow-hidden">
+  <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-5">
+    <div>
+      <h2 class="flex items-center gap-2 text-lg font-bold tracking-tight text-slate-900">
+        {% include 'tracker/_icon.html' with name='link' cls='h-5 w-5 text-teal-600' %} Publication lifecycle &amp; links
+      </h2>
+      <p class="mt-0.5 text-sm text-slate-500">Drive the 7-stage editorial lifecycle, upload acceptance proofs and paste the live publication URL — sale values are locked for Accounts.</p>
+    </div>
+  </div>
+
+  <div class="max-h-[520px] overflow-auto scroll-thin">
+    <table class="min-w-full divide-y divide-slate-200">
+      <thead class="sticky top-0 z-10 bg-slate-50">
+        <tr>
+          <th class="th">Project</th>
+          <th class="th">BDE</th>
+          <th class="th">Net value (₹)</th>
+          <th class="th">Payments</th>
+          <th class="th">Lifecycle</th>
+          <th class="th">Proof &amp; links</th>
+          <th class="th">Action</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100 bg-white">
+        {% for project in projects %}
+        <tr data-project-row="{{ project.pk }}">
+          <td class="td min-w-[160px] max-w-[260px]">
+            <a href="{% url 'tracker:project_detail' project.pk %}{{ qp }}" class="block truncate font-semibold text-slate-800 hover:text-emerald-700 hover:underline" title="{{ project.title }}">{{ project.title }}</a>
+            <p class="mt-0.5 truncate text-xs text-slate-500" title="{{ project.service_type.name }}">{{ project.service_type.name }}</p>
+          </td>
+          <td class="td text-xs text-slate-600">{{ project.bde.get_full_name|default:project.bde.username }}</td>
+          <td class="td font-semibold text-slate-900">₹{{ project.net_value|floatformat:0|intcomma }}</td>
+          <td class="td">
+            <p class="text-xs"><span class="font-semibold text-emerald-700" data-collected>₹{{ project.total_collected|floatformat:0|intcomma }}</span> in</p>
+            <p class="text-xs"><span class="font-semibold text-amber-700" data-pending>₹{{ project.total_pending|floatformat:0|intcomma }}</span> on review</p>
+            {% if project.total_rejected > 0 %}
+            <p class="text-xs"><span class="font-semibold text-rose-600" data-rejected>₹{{ project.total_rejected|floatformat:0|intcomma }}</span> rejected</p>
+            {% endif %}
+          </td>
+          <td class="td" data-status-cell>
+            {% include 'tracker/_status_badge.html' with status=project.publication_status %}
+          </td>
+          <td class="td">
+            <span class="flex items-center gap-1.5 text-slate-400" data-links-cell>
+              {% if project.acceptance_file %}
+                <a href="{% url 'tracker:project_acceptance_file' project.pk %}{{ qp }}" target="_blank" rel="noopener noreferrer" class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-teal-600 transition hover:bg-teal-50" aria-label="Acceptance proof" title="Acceptance proof">{% include 'tracker/_icon.html' with name='image' cls='h-4 w-4' %}</a>
+              {% else %}
+                <span class="inline-flex h-8 w-8 items-center justify-center" title="No acceptance proof yet">{% include 'tracker/_icon.html' with name='image' cls='h-4 w-4 text-slate-300' %}</span>
+              {% endif %}
+              {% if project.acceptance_link %}
+                <a href="{{ project.acceptance_link }}" target="_blank" rel="noopener noreferrer" class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-teal-600 transition hover:bg-teal-50" aria-label="Acceptance letter" title="Acceptance letter">{% include 'tracker/_icon.html' with name='external-link' cls='h-4 w-4' %}</a>
+              {% else %}
+                <span class="inline-flex h-8 w-8 items-center justify-center" title="No acceptance link yet">{% include 'tracker/_icon.html' with name='external-link' cls='h-4 w-4 text-slate-300' %}</span>
+              {% endif %}
+              {% if project.publication_url %}
+                <a href="{{ project.publication_url }}" target="_blank" rel="noopener noreferrer" class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-emerald-600 transition hover:bg-emerald-50" aria-label="Publication / DOI" title="Publication / DOI">{% include 'tracker/_icon.html' with name='link' cls='h-4 w-4' %}</a>
+              {% else %}
+                <span class="inline-flex h-8 w-8 items-center justify-center" title="No publication URL yet">{% include 'tracker/_icon.html' with name='link' cls='h-4 w-4 text-slate-300' %}</span>
+              {% endif %}
+            </span>
+          </td>
+          <td class="td">
+            {% if viewer_is_accounts %}
+            <button type="button"
+                    class="status-edit-btn btn-secondary px-3 py-2 text-xs"
+                    data-project-id="{{ project.pk }}"
+                    data-project-title="{{ project.title|escape }}"
+                    data-status="{{ project.publication_status }}"
+                    data-acceptance-link="{{ project.acceptance_link|escape }}"
+                    data-publication-url="{{ project.publication_url|escape }}"
+                    data-acceptance-file-name="{{ project.acceptance_file.name|cut:'/'|escape }}"
+                    data-url="{% url 'tracker:update_project_status' project.pk %}{{ qp }}">
+              {% include 'tracker/_icon.html' with name='link' cls='h-4 w-4' %} Update
+            </button>
+            {% else %}
+            <span class="text-xs italic text-slate-400">Accounts only</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{# ================= Status / proof / links MODAL ================= #}
+<div id="status-modal" class="fixed inset-0 z-50 hidden items-center justify-center px-4 py-6" role="dialog" aria-modal="true" aria-labelledby="status-modal-title">
+  <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" data-modal-close></div>
+
+  <div class="relative w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+    <div class="flex items-start justify-between gap-3 border-b border-slate-200 px-6 py-5">
+      <div class="min-w-0">
+        <h2 id="status-modal-title" class="text-lg font-bold tracking-tight text-slate-900">Update publication status</h2>
+        <p class="mt-0.5 truncate text-sm text-slate-500" id="modal-project-title">—</p>
+      </div>
+      <button type="button" class="-m-1 rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600" data-modal-close aria-label="Close modal">
+        {% include 'tracker/_icon.html' with name='x' %}
+      </button>
+    </div>
+
+    <form id="status-modal-form" class="space-y-4 px-6 py-5" novalidate enctype="multipart/form-data">
+      <div>
+        <label for="modal-status-select" class="label">Editorial status *</label>
+        <select id="modal-status-select" class="input" name="publication_status">
+          <option value="DRAFT">Draft</option>
+          <option value="SUBMITTED">Submitted</option>
+          <option value="UNDER_REVIEW">Under Review</option>
+          <option value="ACCEPTED">Accepted</option>
+          <option value="PUBLISHED">Published</option>
+          <option value="COMPLETED">Completed</option>
+          <option value="WITHDRAWN">Withdrawn</option>
+        </select>
+      </div>
+      <div>
+        <label for="modal-acceptance-link" class="label">Acceptance letter link</label>
+        <input type="url" id="modal-acceptance-link" class="input" name="acceptance_link" placeholder="https://journal.example.com/acceptance/...">
+      </div>
+      <div>
+        <label for="modal-publication-url" class="label">Live publication URL / DOI</label>
+        <input type="url" id="modal-publication-url" class="input" name="publication_url" placeholder="https://doi.org/10.1000/...">
+      </div>
+      <div>
+        <label for="modal-acceptance-file" class="label flex items-center gap-1.5">
+          {% include 'tracker/_icon.html' with name='upload' cls='h-3.5 w-3.5 text-slate-400' %} Acceptance proof upload <span class="text-xs font-normal text-slate-400">(PNG, JPG or PDF, max 10 MB)</span>
+        </label>
+        <input type="file" id="modal-acceptance-file" class="input" name="acceptance_file" accept="image/jpeg,image/png,.pdf">
+        <p class="mt-1 text-[11px] text-slate-400" id="modal-acceptance-file-current">No acceptance proof uploaded yet.</p>
+      </div>
+
+      <div class="flex items-center justify-between gap-3 border-t border-slate-200 pt-4">
+        <p class="text-xs text-slate-500">Sale value &amp; authors are read-only for Accounts.</p>
+        <div class="flex gap-2">
+          <button type="button" class="btn-secondary" data-modal-close>Cancel</button>
+          <button type="submit" class="btn-primary" id="modal-save-btn">
+            {% include 'tracker/_icon.html' with name='check-circle' cls='h-4.5 w-4.5' %} Save changes
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ================= Payment proof viewer MODAL ================= #}
+<div id="proof-modal" class="fixed inset-0 z-50 hidden items-center justify-center px-4 py-6" role="dialog" aria-modal="true" aria-labelledby="proof-modal-title">
+  <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" data-proof-close></div>
+
+  <div class="relative flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+    <div class="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
+      <div class="min-w-0">
+        <h2 id="proof-modal-title" class="text-base font-bold tracking-tight text-slate-900">Payment proof</h2>
+        <p class="mt-0.5 truncate text-sm text-slate-500" id="proof-modal-sub">—</p>
+      </div>
+      <div class="flex shrink-0 items-center gap-2">
+        <a id="proof-open-tab" href="#" target="_blank" rel="noopener noreferrer" class="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50">
+          {% include 'tracker/_icon.html' with name='external-link' cls='h-3.5 w-3.5' %} Open
+        </a>
+        <button type="button" class="-m-1 rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600" data-proof-close aria-label="Close proof viewer">
+          {% include 'tracker/_icon.html' with name='x' %}
+        </button>
+      </div>
+    </div>
+
+    <div class="min-h-0 flex-1 overflow-auto bg-slate-50 p-4">
+      <img id="proof-modal-img" class="mx-auto max-h-[62vh] rounded-lg border border-slate-200 bg-white object-contain" alt="Payment transaction proof" src="">
+      <iframe id="proof-modal-pdf" class="hidden h-[62vh] w-full rounded-lg border border-slate-200 bg-white" title="Payment proof PDF" src=""></iframe>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-200 bg-white px-5 py-3 text-xs text-slate-500">
+      <span><span class="font-semibold text-slate-700">Transaction:</span> <span id="proof-meta-txn" class="font-mono">—</span></span>
+      <span><span class="font-semibold text-slate-700">Paid by:</span> <span id="proof-meta-author">—</span></span>
+      <span><span class="font-semibold text-slate-700">Amount:</span> <span id="proof-meta-amount">—</span></span>
+      <span><span class="font-semibold text-slate-700">Phase:</span> <span id="proof-meta-type">—</span></span>
+      <span class="hidden sm:inline"><span class="font-semibold text-slate-700">BDE:</span> <span id="proof-meta-bde">—</span></span>
+      <span class="ml-auto hidden truncate text-slate-400 sm:inline" id="proof-meta-file"></span>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block page_scripts %}
+{# ================================================================== #}
+{#  Accounts interactivity (vanilla JS + fetch()):                     #}
+{#   1. Async Verify / Reject / Revert without a page reload.          #}
+{#   2. Tailwind modal: 7-stage status + links + acceptance proof      #}
+{#      upload, submitted as multipart/form-data.                      #}
+{# ================================================================== #}
+<script>
+(function () {
+  'use strict';
+
+  var SPINNER = '{% include "tracker/_icon.html" with name="spinner" cls="h-4 w-4 animate-spin" %}';
+  var PROOF_ICON = '{% include "tracker/_icon.html" with name="image" cls="h-4 w-4" %}';
+  var PROOF_NONE_ICON = '{% include "tracker/_icon.html" with name="image" cls="h-3.5 w-3.5 text-slate-300" %}';
+
+  function escapeHtml(str) {
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function inr(value) {
+    var n = parseFloat(value);
+    if (isNaN(n)) n = 0;
+    return '₹' + n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+  }
+
+  /* ================================================================
+   *  1. PAYMENT CLEARING (async: verify / reject / revert)
+   * ================================================================ */
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.clear-btn');
+    if (!btn) return;
+
+    var action = btn.dataset.action || 'verify';
+    var originalHTML = btn.innerHTML;
+    var siblings = btn.parentElement ? btn.parentElement.querySelectorAll('.clear-btn') : [];
+    siblings.forEach(function (b) { b.disabled = true; });
+    btn.innerHTML = SPINNER + ' Working…';
+
+    window.apiPost(btn.dataset.url, { action: action }).then(function (data) {
+      var inst = data.installment;
+
+      /* remove the row from whichever table it currently lives in */
+      document.querySelectorAll('[data-installment-row="' + inst.id + '"]').forEach(function (row) {
+        row.remove();
+      });
+
+      /* re-render it in the correct table (Verified vs clearing queue) */
+      var targetBody = inst.verification_status === 'VERIFIED'
+        ? document.getElementById('verified-tbody')
+        : document.getElementById('pending-tbody');
+      if (targetBody) {
+        var emptyRow = targetBody.querySelector('[data-empty-row]');
+        if (emptyRow) emptyRow.remove();
+        targetBody.insertAdjacentHTML('afterbegin', buildRow(inst));
+      }
+
+      /* live KPI refresh */
+      if (data.stats) {
+        var pc = document.getElementById('stat-pending-count');
+        var pa = document.getElementById('stat-pending-amount');
+        var rc = document.getElementById('stat-rejected-count');
+        var ra = document.getElementById('stat-rejected-amount');
+        var va = document.getElementById('stat-verified-amount');
+        var vc = document.getElementById('stat-verified-count');
+        if (pc) pc.textContent = data.stats.pending_count;
+        if (pa) pa.textContent = inr(data.stats.pending_amount);
+        if (rc) rc.textContent = data.stats.rejected_count + ' rejected';
+        if (ra) ra.textContent = inr(data.stats.rejected_amount) + ' rejected';
+        if (va) va.textContent = inr(data.stats.verified_amount);
+        if (vc) vc.textContent = data.stats.verified_count + ' installments';
+      }
+
+      /* update the project's collected/pending cells if rendered */
+      if (data.project) {
+        var row = document.querySelector('[data-project-row="' + data.project.id + '"]');
+        if (row) {
+          var collected = row.querySelector('[data-collected]');
+          var pending = row.querySelector('[data-pending]');
+          if (collected) collected.textContent = inr(data.project.collected);
+          if (pending) pending.textContent = inr(data.project.pending);
+        }
+      }
+
+      var msg;
+      if (inst.verification_status === 'VERIFIED') {
+        msg = 'Verified ' + inr(inst.amount) + ' (' + inst.transaction_ref + ').';
+      } else if (inst.verification_status === 'REJECTED') {
+        msg = 'Rejected ' + inst.transaction_ref + ' — the BDE can correct it and resubmit.';
+      } else {
+        msg = 'Verification reverted for ' + inst.transaction_ref + ' — it is back in the queue.';
+      }
+      window.showToast(msg, inst.verification_status === 'VERIFIED' ? 'success'
+                          : inst.verification_status === 'REJECTED' ? 'error' : 'warn');
+    }).catch(function (err) {
+      window.showToast(err.message, 'error');
+      siblings.forEach(function (b) { b.disabled = false; });
+      btn.innerHTML = originalHTML;
+    });
+  });
+
+  /* Build a <tr> for either table from the JSON installment payload. */
+  function buildRow(inst) {
+    var detailUrl = '{% url "tracker:project_detail" 0 %}'.replace('/0/', '/' + inst.project_id + '/');
+    if (window.location.search) detailUrl += window.location.search;
+    var clearUrl = '{% url "tracker:set_verification" 0 %}'.replace('/0/', '/' + inst.id + '/');
+    if (window.location.search) clearUrl += window.location.search;
+
+    var modeCell = '<td class="td text-xs text-slate-600"><p>' + escapeHtml(inst.payment_mode || '—') + '</p>' +
+      (inst.payment_date ? '<p class="text-slate-400">' + escapeHtml(inst.payment_date) + '</p>' : '') + '</td>';
+
+    /* The paying author (authors pay individually) + the database entry ID. */
+    var authorCell = '<td class="td">' + (inst.author_name
+      ? '<p class="max-w-[140px] truncate text-sm font-medium text-slate-800" title="' + escapeHtml(inst.author_name + ' (' + inst.author_position + ')') + '">' + escapeHtml(inst.author_name) + '</p>' +
+        '<p class="text-[10px] font-medium text-slate-400">' + escapeHtml(inst.author_position) + '</p>'
+      : '<span class="text-xs italic text-slate-400">Not linked</span>') + '</td>';
+    var phaseCell = '<td class="td"><span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">' + escapeHtml(inst.payment_type) + '</span>' +
+      '<p class="mt-0.5 text-[10px] font-medium text-slate-400" title="Database entry ID">Entry ID ' + escapeHtml(String(inst.id)) + '</p></td>';
+
+    /* Proof cell: teal "View" button when the BDE attached a photo (or PDF);
+       the gateway query param keeps the /media/... URL reachable. */
+    var proofCellHtml;
+    if (inst.proof_url) {
+      var proofUrl = inst.proof_url + (window.location.search || '');
+      proofCellHtml = '<td class="td"><button type="button" class="proof-view-btn inline-flex h-9 items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-2.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400"' +
+        ' data-proof-url="' + escapeHtml(proofUrl) + '"' +
+        ' data-proof-name="' + escapeHtml(inst.proof_name) + '"' +
+        ' data-proof-image="' + (inst.proof_is_image ? 'true' : 'false') + '"' +
+        ' data-project="' + escapeHtml(inst.project_title) + '"' +
+        ' data-txn="' + escapeHtml(inst.transaction_ref) + '"' +
+        ' data-author="' + escapeHtml(inst.author_name || '') + '"' +
+        ' data-bde="' + escapeHtml(inst.bde_name) + '"' +
+        ' data-type="' + escapeHtml(inst.payment_type) + '"' +
+        ' data-amount="' + inr(inst.amount) + '"' +
+        ' aria-label="View payment proof">' + PROOF_ICON + ' View</button></td>';
+    } else {
+      proofCellHtml = '<td class="td"><span class="inline-flex items-center gap-1 text-xs italic text-slate-400" title="No proof photo attached">' + PROOF_NONE_ICON + ' None</span></td>';
+    }
+
+    if (inst.verification_status === 'VERIFIED') {
+      return '<tr data-installment-row="' + inst.id + '">' +
+        '<td class="td min-w-[160px] max-w-[240px]"><a href="' + escapeHtml(detailUrl) + '" class="block truncate font-semibold text-slate-800 hover:text-emerald-700 hover:underline" title="' + escapeHtml(inst.project_title) + '">' + escapeHtml(inst.project_title) + '</a></td>' +
+        '<td class="td text-xs text-slate-600">' + escapeHtml(inst.bde_name) + '</td>' +
+        authorCell +
+        phaseCell +
+        '<td class="td font-semibold text-slate-900">' + inr(inst.amount) + '</td>' +
+        '<td class="td font-mono text-xs text-slate-600">' + escapeHtml(inst.transaction_ref) + '</td>' +
+        modeCell +
+        '<td class="td text-xs text-slate-600">' + escapeHtml(inst.verified_by) + '</td>' +
+        '<td class="td text-xs text-slate-500">' + escapeHtml(inst.verification_date) + '</td>' +
+        '<td class="td">{% if viewer_is_accounts %}<button type="button" class="clear-btn btn-secondary px-3 py-2 text-xs" data-url="' + escapeHtml(clearUrl) + '" data-action="revert" data-id="' + inst.id + '">' +
+        '{% include "tracker/_icon.html" with name="refresh-cw" cls="h-4 w-4" %} Revert</button>{% else %}<span class="text-xs italic text-slate-400">Accounts only</span>{% endif %}</td></tr>';
+    }
+
+    /* Pending or Rejected -> clearing queue row (rejected rows tinted red). */
+    var rejected = inst.verification_status === 'REJECTED';
+    return '<tr data-installment-row="' + inst.id + '"' + (rejected ? ' class="bg-rose-50/40"' : '') + '>' +
+      '<td class="td min-w-[160px] max-w-[260px]"><a href="' + escapeHtml(detailUrl) + '" class="block truncate font-semibold text-slate-800 hover:text-emerald-700 hover:underline" title="' + escapeHtml(inst.project_title) + '">' + escapeHtml(inst.project_title) + '</a>' +
+      '<p class="mt-0.5 truncate text-xs text-slate-500">' + escapeHtml(inst.service_name) + '</p>' +
+      (rejected ? '<p class="mt-0.5 text-[11px] font-semibold text-rose-600">Rejected — awaiting a corrected resubmission</p>' : '') + '</td>' +
+      '<td class="td text-xs text-slate-600">' + escapeHtml(inst.bde_name) + '</td>' +
+      authorCell +
+      phaseCell +
+      '<td class="td font-semibold text-slate-900">' + inr(inst.amount) + '</td>' +
+      '<td class="td font-mono text-xs text-slate-600">' + escapeHtml(inst.transaction_ref) + '</td>' +
+      modeCell +
+      proofCellHtml +
+      '<td class="td">{% if viewer_is_accounts %}<div class="flex items-center gap-1.5">' +
+      '<button type="button" class="clear-btn btn-primary px-3 py-2 text-xs" data-url="' + escapeHtml(clearUrl) + '" data-action="verify" data-id="' + inst.id + '">' +
+      '{% include "tracker/_icon.html" with name="check-circle" cls="h-4 w-4" %} Verify</button>' +
+      (rejected ? '' : '<button type="button" class="clear-btn inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs font-semibold text-rose-700 shadow-sm transition hover:bg-rose-100" data-url="' + escapeHtml(clearUrl) + '" data-action="reject" data-id="' + inst.id + '">' +
+        '{% include "tracker/_icon.html" with name="x-circle" cls="h-4 w-4" %} Reject</button>') +
+      '</div>{% else %}<span class="text-xs italic text-slate-400">Accounts only</span>{% endif %}</td></tr>';
+  }
+
+  /* ================================================================
+   *  PROOF VIEWER MODAL (the BDE's transaction photo / PDF)
+   * ================================================================ */
+  var proofModal = document.getElementById('proof-modal');
+  var proofImg = document.getElementById('proof-modal-img');
+  var proofPdf = document.getElementById('proof-modal-pdf');
+  var proofSub = document.getElementById('proof-modal-sub');
+  var proofOpenTab = document.getElementById('proof-open-tab');
+
+  function openProof(btn) {
+    var url = btn.dataset.proofUrl || '';
+    if (!url) return;
+    proofSub.textContent = btn.dataset.project || '—';
+    proofOpenTab.href = url;
+    if (btn.dataset.proofImage === 'true') {
+      proofPdf.classList.add('hidden');
+      proofPdf.src = 'about:blank';
+      proofImg.classList.remove('hidden');
+      proofImg.src = url;
+      proofImg.alt = 'Payment proof — ' + (btn.dataset.txn || '');
+    } else {
+      proofImg.classList.add('hidden');
+      proofImg.removeAttribute('src');
+      proofPdf.classList.remove('hidden');
+      proofPdf.src = url;
+    }
+    document.getElementById('proof-meta-txn').textContent = btn.dataset.txn || '—';
+    document.getElementById('proof-meta-author').textContent = btn.dataset.author || '—';
+    document.getElementById('proof-meta-amount').textContent = btn.dataset.amount || '—';
+    document.getElementById('proof-meta-type').textContent = btn.dataset.type || '—';
+    document.getElementById('proof-meta-bde').textContent = btn.dataset.bde || '—';
+    document.getElementById('proof-meta-file').textContent = btn.dataset.proofName || '';
+    proofModal.classList.remove('hidden');
+    proofModal.classList.add('flex');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeProof() {
+    proofModal.classList.add('hidden');
+    proofModal.classList.remove('flex');
+    document.body.style.overflow = '';
+    proofImg.removeAttribute('src');
+    proofPdf.src = 'about:blank';
+  }
+
+  /* Delegated clicks: works for server-rendered rows AND buildRow()-built
+     rows (the clearing actions rebuild rows without a page reload). */
+  document.addEventListener('click', function (e) {
+    var proofBtn = e.target.closest('.proof-view-btn');
+    if (proofBtn) { openProof(proofBtn); return; }
+    if (e.target.closest('[data-proof-close]')) closeProof();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !proofModal.classList.contains('hidden')) closeProof();
+  });
+
+  /* ================================================================
+   *  STATUS / PROOF / LINKS MODAL (multipart POST, no reload)
+   * ================================================================ */
+  var modal = document.getElementById('status-modal');
+  var modalForm = document.getElementById('status-modal-form');
+  var statusInput = document.getElementById('modal-status-select');
+  var accInput = document.getElementById('modal-acceptance-link');
+  var pubInput = document.getElementById('modal-publication-url');
+  var fileInput = document.getElementById('modal-acceptance-file');
+  var fileCurrent = document.getElementById('modal-acceptance-file-current');
+  var titleEl = document.getElementById('modal-project-title');
+  var saveBtn = document.getElementById('modal-save-btn');
+  var activeBtn = null;
+
+  /* Colour map mirroring _status_badge.html (7-stage lifecycle). */
+  var ICONS = {
+    clock: '{% include "tracker/_icon.html" with name="clock" cls="h-3.5 w-3.5" %}',
+    fileText: '{% include "tracker/_icon.html" with name="file-text" cls="h-3.5 w-3.5" %}',
+    eye: '{% include "tracker/_icon.html" with name="eye" cls="h-3.5 w-3.5" %}',
+    checkCircle: '{% include "tracker/_icon.html" with name="check-circle" cls="h-3.5 w-3.5" %}',
+    badgeCheck: '{% include "tracker/_icon.html" with name="badge-check" cls="h-3.5 w-3.5" %}',
+    xCircle: '{% include "tracker/_icon.html" with name="x-circle" cls="h-3.5 w-3.5" %}',
+    pencil: '{% include "tracker/_icon.html" with name="pencil" cls="h-3.5 w-3.5" %}',
+  };
+  var BADGES = {
+    DRAFT:       { cls: 'badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20', label: 'Draft', icon: ICONS.pencil },
+    SUBMITTED:   { cls: 'badge bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-600/20', label: 'Submitted', icon: ICONS.fileText },
+    UNDER_REVIEW:{ cls: 'badge bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-600/20', label: 'Under Review', icon: ICONS.eye },
+    ACCEPTED:    { cls: 'badge bg-teal-100 text-teal-800 ring-1 ring-inset ring-teal-600/20', label: 'Accepted', icon: ICONS.checkCircle },
+    PUBLISHED:   { cls: 'badge bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-600/20', label: 'Published', icon: ICONS.badgeCheck },
+    COMPLETED:   { cls: 'badge bg-emerald-600 text-white ring-1 ring-inset ring-emerald-700', label: 'Completed', icon: ICONS.checkCircle },
+    WITHDRAWN:   { cls: 'badge bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-600/20', label: 'Withdrawn', icon: ICONS.xCircle },
+  };
+
+  function openModal(btn) {
+    activeBtn = btn;
+    titleEl.textContent = btn.dataset.projectTitle || '—';
+    statusInput.value = btn.dataset.status || 'DRAFT';
+    accInput.value = btn.dataset.acceptanceLink || '';
+    pubInput.value = btn.dataset.publicationUrl || '';
+    fileInput.value = '';
+    fileCurrent.textContent = btn.dataset.acceptanceFileName
+      ? 'Current: ' + btn.dataset.acceptanceFileName
+      : 'No acceptance proof uploaded yet.';
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    document.body.style.overflow = 'hidden';
+    statusInput.focus();
+  }
+
+  function closeModal() {
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+    document.body.style.overflow = '';
+    activeBtn = null;
+  }
+
+  document.querySelectorAll('.status-edit-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () { openModal(btn); });
+  });
+  modal.querySelectorAll('[data-modal-close]').forEach(function (el) {
+    el.addEventListener('click', closeModal);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+  });
+
+  modalForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (!activeBtn) return;
+
+    var url = activeBtn.dataset.url;
+    var originalHTML = saveBtn.innerHTML;
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = SPINNER + ' Saving…';
+
+    /* multipart/form-data so the acceptance-proof FILE rides along
+       (FTSD 3.4); the endpoint also accepts plain JSON for quick
+       status-only edits, but the modal always uses FormData. */
+    var body = new FormData(modalForm);
+    fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-CSRFToken': window.getCsrfToken(), 'Accept': 'application/json' },
+      body: body,
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) throw new Error(data.error || ('Request failed (' + res.status + ')'));
+        return data;
+      });
+    }).then(function (data) {
+      var p = data.project;
+      var row = document.querySelector('[data-project-row="' + p.id + '"]');
+      if (row) {
+        /* swap the lifecycle badge */
+        var cell = row.querySelector('[data-status-cell]');
+        if (cell) {
+          var b = BADGES[p.publication_status] || BADGES.DRAFT;
+          cell.innerHTML = '<span class="' + b.cls + '">' + b.icon + ' ' + b.label + '</span>';
+        }
+        /* swap the proof + links cell */
+        var links = row.querySelector('[data-links-cell]');
+        if (links) {
+          var fileA = p.acceptance_file_url
+            ? '<a href="' + escapeHtml(p.acceptance_file_url) + '" target="_blank" rel="noopener noreferrer" class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-teal-600 transition hover:bg-teal-50" aria-label="Acceptance proof" title="Acceptance proof">{% include "tracker/_icon.html" with name="image" cls="h-4 w-4" %}</a>'
+            : '<span class="inline-flex h-8 w-8 items-center justify-center" title="No acceptance proof yet">{% include "tracker/_icon.html" with name="image" cls="h-4 w-4 text-slate-300" %}</span>';
+          var accA = p.acceptance_link
+            ? '<a href="' + escapeHtml(p.acceptance_link) + '" target="_blank" rel="noopener noreferrer" class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-teal-600 transition hover:bg-teal-50" aria-label="Acceptance letter" title="Acceptance letter">{% include "tracker/_icon.html" with name="external-link" cls="h-4 w-4" %}</a>'
+            : '<span class="inline-flex h-8 w-8 items-center justify-center" title="No acceptance link yet">{% include "tracker/_icon.html" with name="external-link" cls="h-4 w-4 text-slate-300" %}</span>';
+          var pubA = p.publication_url
+            ? '<a href="' + escapeHtml(p.publication_url) + '" target="_blank" rel="noopener noreferrer" class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-emerald-600 transition hover:bg-emerald-50" aria-label="Publication / DOI" title="Publication / DOI">{% include "tracker/_icon.html" with name="link" cls="h-4 w-4" %}</a>'
+            : '<span class="inline-flex h-8 w-8 items-center justify-center" title="No publication URL yet">{% include "tracker/_icon.html" with name="link" cls="h-4 w-4 text-slate-300" %}</span>';
+          links.innerHTML = fileA + accA + pubA;
+        }
+        /* keep the opener button's dataset in sync for re-opens */
+        activeBtn.dataset.status = p.publication_status;
+        activeBtn.dataset.acceptanceLink = p.acceptance_link || '';
+        activeBtn.dataset.publicationUrl = p.publication_url || '';
+        if (p.acceptance_file_name) activeBtn.dataset.acceptanceFileName = p.acceptance_file_name;
+      }
+
+      window.showToast('"' + p.title + '" is now ' + p.publication_status_display + '.', 'success');
+      closeModal();
+    }).catch(function (err) {
+      window.showToast(err.message, 'error');
+    }).finally(function () {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = originalHTML;
+    });
+  });
+})();
+</script>
+{% endblock %}

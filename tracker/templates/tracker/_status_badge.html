@@ -1,0 +1,37 @@
+{# ------------------------------------------------------------------ #}
+{#  _status_badge.html -- coloured pill for the 7-stage publication  #}
+{#  lifecycle (FTSD 3.4).                                             #}
+{#  Usage: {% include 'tracker/_status_badge.html' with status=project.publication_status %}  #}
+{#  (The accounts_dashboard JS keeps an identical colour map in sync.)#}
+{# ------------------------------------------------------------------ #}
+{% if status == 'DRAFT' %}
+  <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">
+    {% include 'tracker/_icon.html' with name='pencil' cls='h-3.5 w-3.5' %} Draft
+  </span>
+{% elif status == 'SUBMITTED' %}
+  <span class="badge bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-600/20">
+    {% include 'tracker/_icon.html' with name='file-text' cls='h-3.5 w-3.5' %} Submitted
+  </span>
+{% elif status == 'UNDER_REVIEW' %}
+  <span class="badge bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-600/20">
+    {% include 'tracker/_icon.html' with name='eye' cls='h-3.5 w-3.5' %} Under Review
+  </span>
+{% elif status == 'ACCEPTED' %}
+  <span class="badge bg-teal-100 text-teal-800 ring-1 ring-inset ring-teal-600/20">
+    {% include 'tracker/_icon.html' with name='check-circle' cls='h-3.5 w-3.5' %} Accepted
+  </span>
+{% elif status == 'PUBLISHED' %}
+  <span class="badge bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-600/20">
+    {% include 'tracker/_icon.html' with name='badge-check' cls='h-3.5 w-3.5' %} Published
+  </span>
+{% elif status == 'COMPLETED' %}
+  <span class="badge bg-emerald-600 text-white ring-1 ring-inset ring-emerald-700">
+    {% include 'tracker/_icon.html' with name='check-circle' cls='h-3.5 w-3.5' %} Completed
+  </span>
+{% elif status == 'WITHDRAWN' %}
+  <span class="badge bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-600/20">
+    {% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} Withdrawn
+  </span>
+{% else %}
+  <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">{{ status|default:'—' }}</span>
+{% endif %}

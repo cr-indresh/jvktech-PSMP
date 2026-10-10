@@ -1,0 +1,722 @@
+{% extends 'tracker/base.html' %}
+{# ================================================================== #}
+{#  project_detail.html -- 360 deg view of one project (PSMP / FTSD).  #}
+{#  BDEs see only their own projects (enforced in the view) and        #}
+{#  get the "Edit project" card (title / service / sale / discount /   #}
+{#  remarks), the inline author-edit formset and the payment           #}
+{#  management tools; Accounts stays read-only; admins hold EVERY      #}
+{#  BDE edit action (plus the admin-exclusive Delete button).          #}
+{# ================================================================== #}
+{% load humanize %}
+{% block title %}{{ project.title }}{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex flex-wrap items-start justify-between gap-4">
+  <div class="min-w-0">
+    <p class="mb-1 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500">
+      <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">{{ project.service_type.name }}</span>
+      <span>·</span>
+      <span>Sold by {{ project.bde.get_full_name|default:project.bde.username }}</span>
+      <span>·</span>
+      <span>Created {{ project.created_at|date:"d M Y" }}</span>
+      <span>·</span>
+      <span title="Author slots booked / provisioned">{{ project.authors_count }}/{{ project.total_slots }} slots booked</span>
+    </p>
+    <h1 class="max-w-3xl text-2xl font-bold tracking-tight text-slate-900">{{ project.title }}</h1>
+    <div class="mt-2">{% include 'tracker/_status_badge.html' with status=project.publication_status %}</div>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-2.5">
+    {% if can_edit_project %}
+    {# Owning BDE: open the collapsible "Edit project" card (title / service / sale / discount / remarks). #}
+    <button type="button" id="project-edit-btn" class="btn-secondary" aria-expanded="false" aria-controls="project-edit-card">
+      {% include 'tracker/_icon.html' with name='pencil' cls='h-4.5 w-4.5' %} Edit project
+    </button>
+    {% endif %}
+    {% if app_role == 'BDE' %}
+    <a href="{% url 'tracker:bde_dashboard' %}{{ qp }}" class="btn-secondary">
+      {% include 'tracker/_icon.html' with name='briefcase' cls='h-4.5 w-4.5' %} Back to my dashboard
+    </a>
+    {% elif app_role == 'ACCOUNTS' %}
+    <a href="{% url 'tracker:accounts_dashboard' %}{{ qp }}" class="btn-secondary">
+      {% include 'tracker/_icon.html' with name='receipt' cls='h-4.5 w-4.5' %} Back to accounts
+    </a>
+    {% else %}
+    <a href="{% url 'tracker:admin_dashboard' %}{{ qp }}" class="btn-secondary">
+      {% include 'tracker/_icon.html' with name='layout-dashboard' cls='h-4.5 w-4.5' %} Back to analytics
+    </a>
+    {% endif %}
+    {% if is_admin_viewer %}
+    {% comment %} ADMIN-only destructive action -- the ONLY role that may
+       delete a project (BDEs can edit everything but never delete).
+       Server-side re-check: views.project_delete (role_required ADMIN). {% endcomment %}
+    <form method="post" action="{% url 'tracker:project_delete' project.pk %}{{ qp }}" class="inline"
+          onsubmit="return confirm('Permanently delete the project &quot;{{ project.title|escapejs }}&quot;? This also removes its {{ authors|length }} author(s), {{ installments|length }} payment record(s) and every uploaded proof — it cannot be undone.');">
+      {% csrf_token %}
+      <button type="submit" class="inline-flex h-[42px] items-center gap-2 rounded-lg border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-600 shadow-sm transition hover:border-rose-300 hover:bg-rose-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+              aria-label="Delete this project (admin only)">
+        {% include 'tracker/_icon.html' with name='trash-2' cls='h-4.5 w-4.5' %} Delete project
+      </button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if can_edit_project %}
+{% comment %} Collapsible "Edit project" card (owning BDE only) -- title,
+   service, sale value, discount, remarks. Hidden until the "Edit project"
+   header button opens it; STAYS OPEN after a failed save so the errors
+   stay visible (same behaviour as the inline payment edit rows). {% endcomment %}
+<div id="project-edit-card" class="card mb-6 overflow-hidden{% if not project_edit_form.errors %} hidden{% endif %}" role="region" aria-label="Edit project details">
+  <div class="border-b border-slate-200 bg-slate-50/60 px-6 py-4">
+    <h2 class="flex items-center gap-2 text-sm font-bold text-slate-800">
+      {% include 'tracker/_icon.html' with name='pencil' cls='h-4 w-4 text-emerald-600' %} Edit project details
+    </h2>
+    <p class="mt-0.5 text-xs text-slate-500">Title, category, sale value, discount and remarks — the same fields you filled at creation. Authors and payments are edited further down; the publication lifecycle stays with Accounts.</p>
+  </div>
+  <form method="post" action="{% url 'tracker:project_edit' project.pk %}{{ qp }}" class="space-y-4 px-6 py-5">
+    {% csrf_token %}
+    <div>
+      <label for="{{ project_edit_form.title.id_for_label }}" class="label">Title of article / book / patent <span class="text-rose-500">*</span></label>
+      {{ project_edit_form.title }}
+      {% for error in project_edit_form.title.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+    </div>
+    <div class="grid gap-3 md:grid-cols-3">
+      <div>
+        <label for="{{ project_edit_form.service_type.id_for_label }}" class="label">Publication category <span class="text-rose-500">*</span></label>
+        {{ project_edit_form.service_type }}
+        {% for error in project_edit_form.service_type.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+      </div>
+      <div>
+        <label for="{{ project_edit_form.sale_value.id_for_label }}" class="label">Sale value (₹) <span class="text-rose-500">*</span></label>
+        {{ project_edit_form.sale_value }}
+        {% for error in project_edit_form.sale_value.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+      </div>
+      <div>
+        <label for="{{ project_edit_form.discount_value.id_for_label }}" class="label">Discount applied (₹) <span class="text-xs font-normal text-slate-400">(optional)</span></label>
+        {{ project_edit_form.discount_value }}
+        {% for error in project_edit_form.discount_value.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+      </div>
+    </div>
+    <div>
+      <label for="{{ project_edit_form.remarks.id_for_label }}" class="label">Remarks <span class="text-xs font-normal text-slate-400">(optional)</span></label>
+      {{ project_edit_form.remarks }}
+      {% for error in project_edit_form.remarks.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+    </div>
+    {% if project_edit_form.non_field_errors %}{% for error in project_edit_form.non_field_errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}{% endif %}
+    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
+      <p class="text-xs text-slate-500">{% include 'tracker/_icon.html' with name='shield' cls='h-3.5 w-3.5 inline align-[-2px] text-emerald-600' %} The payment schedule (₹{{ total_scheduled|floatformat:0|intcomma }} so far) stays intact — the net billable can only stay the same or grow.</p>
+      <div class="flex flex-wrap gap-2.5">
+        <button type="button" id="project-edit-cancel" class="btn-secondary">Cancel</button>
+        <button type="submit" class="btn-primary">
+          {% include 'tracker/_icon.html' with name='check-circle' cls='h-4.5 w-4.5' %} Save project
+        </button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<div class="grid gap-6 lg:grid-cols-3">
+
+  {# ---- Commercial summary ---- #}
+  {% comment %}
+    min-w-0 on both grid items prevents the classic CSS-grid blowout: without it
+    the payments table's nowrap min-content width forces the track (and the whole
+    page) ~600px wide on phones instead of scrolling inside its wrapper.
+  {% endcomment %}
+  <div class="card h-fit min-w-0 p-5 lg:col-span-1">
+    <h2 class="mb-4 text-sm font-bold uppercase tracking-wider text-slate-500">Commercial summary</h2>
+    <dl class="space-y-3 text-sm">
+      <div class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3.5 py-2.5">
+        <dt class="text-slate-500">Sale value</dt>
+        <dd class="font-semibold text-slate-900">₹{{ project.sale_value|floatformat:0|intcomma }}</dd>
+      </div>
+      <div class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3.5 py-2.5">
+        <dt class="text-slate-500">Discount applied</dt>
+        <dd class="font-semibold text-slate-900">₹{{ project.discount_value|floatformat:0|intcomma }}</dd>
+      </div>
+      <div class="flex items-center justify-between gap-3 rounded-lg bg-emerald-50 px-3.5 py-2.5 ring-1 ring-inset ring-emerald-600/10">
+        <dt class="font-medium text-emerald-800">Net billable</dt>
+        <dd class="font-bold text-emerald-800">₹{{ project.net_value|floatformat:0|intcomma }}</dd>
+      </div>
+      <div class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3.5 py-2.5">
+        <dt class="text-slate-500">Collected (verified)</dt>
+        <dd class="font-semibold text-emerald-700">₹{{ project.total_collected|floatformat:0|intcomma }}</dd>
+      </div>
+      <div class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3.5 py-2.5">
+        <dt class="text-slate-500">Pending verification</dt>
+        <dd class="font-semibold text-amber-700">₹{{ project.total_pending|floatformat:0|intcomma }}</dd>
+      </div>
+      {% if project.total_rejected > 0 %}
+      <div class="flex items-center justify-between gap-3 rounded-lg bg-rose-50 px-3.5 py-2.5">
+        <dt class="text-slate-500">Rejected by Accounts</dt>
+        <dd class="font-semibold text-rose-700">₹{{ project.total_rejected|floatformat:0|intcomma }}</dd>
+      </div>
+      {% endif %}
+      <div class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3.5 py-2.5">
+        <dt class="text-slate-500">Balance due</dt>
+        <dd class="font-semibold text-slate-900">₹{{ project.balance_due|floatformat:0|intcomma }}</dd>
+      </div>
+    </dl>
+
+    {% if project.remarks %}
+    <div class="mt-5 border-t border-slate-200 pt-4">
+      <p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">Remarks</p>
+      <p class="text-sm leading-relaxed text-slate-600">{{ project.remarks|linebreaksbr }}</p>
+    </div>
+    {% endif %}
+
+    <div class="mt-5 space-y-2 border-t border-slate-200 pt-4 text-sm">
+      {% if project.acceptance_file %}
+        <a href="{% url 'tracker:project_acceptance_file' project.pk %}{{ qp }}" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 font-medium text-teal-700 hover:underline">
+          {% include 'tracker/_icon.html' with name='image' cls='h-4 w-4' %} Acceptance proof
+        </a>
+      {% endif %}
+      {% if project.acceptance_link %}
+        <a href="{{ project.acceptance_link }}" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 font-medium text-teal-700 hover:underline">
+          {% include 'tracker/_icon.html' with name='external-link' cls='h-4 w-4' %} Acceptance letter
+        </a>
+      {% endif %}
+      {% if project.publication_url %}
+        <a href="{{ project.publication_url }}" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 font-medium text-emerald-700 hover:underline">
+          {% include 'tracker/_icon.html' with name='link' cls='h-4 w-4' %} Publication / DOI
+        </a>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ---- Authors + payments ---- #}
+  <div class="min-w-0 space-y-6 lg:col-span-2">
+
+    <section class="card overflow-hidden">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-5">
+        <div>
+          <h2 class="flex items-center gap-2 text-lg font-bold tracking-tight text-slate-900">
+            {% include 'tracker/_icon.html' with name='users' cls='h-5 w-5 text-slate-400' %} Author slots ({{ authors|length }}/{{ project.total_slots }})
+          </h2>
+          <p class="mt-0.5 text-sm text-slate-500">
+            {% if can_edit_authors %}Editable by you — update the profile details below; the booked slots themselves stay fixed.{% else %}Maintained by the sales executive — read-only here (FTSD 2.0).{% endif %}
+          </p>
+        </div>
+        {% if can_edit_authors %}
+        <span class="badge bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-600/20">{% include 'tracker/_icon.html' with name='user' cls='h-3.5 w-3.5' %} BDE editable</span>
+        {% endif %}
+      </div>
+
+      {% if can_edit_authors %}
+      {# ---------- Owning BDE: inline author edit formset ---------- #}
+      <form method="post" action="{% url 'tracker:project_authors_update' project.pk %}{{ qp }}" class="space-y-4 px-6 py-5">
+        {% csrf_token %}
+        {{ author_formset.management_form }}
+        {% for author_form in author_formset %}
+        <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+          <div class="mb-3 flex items-center gap-2.5">
+            <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-800">{{ author_form.instance.position }}</span>
+            <span class="text-sm font-semibold text-slate-700">{{ author_form.instance.position_label }}</span>
+            {% if author_form.instance.designation %}<span class="text-xs text-slate-400">{{ author_form.instance.designation }}</span>{% endif %}
+          </div>
+          <div class="grid gap-3 md:grid-cols-2">
+            <div>
+              <label for="{{ author_form.name.id_for_label }}" class="label">Full name <span class="text-rose-500">*</span></label>
+              {{ author_form.name }}
+              {% for error in author_form.name.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ author_form.email.id_for_label }}" class="label">Email <span class="text-rose-500">*</span></label>
+              {{ author_form.email }}
+              {% for error in author_form.email.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ author_form.phone.id_for_label }}" class="label">Mobile number <span class="text-rose-500">*</span></label>
+              {{ author_form.phone }}
+              {% for error in author_form.phone.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ author_form.designation.id_for_label }}" class="label">Designation</label>
+              {{ author_form.designation }}
+            </div>
+            <div>
+              <label for="{{ author_form.department.id_for_label }}" class="label">Department</label>
+              {{ author_form.department }}
+            </div>
+            <div>
+              <label for="{{ author_form.company_name.id_for_label }}" class="label">Company / Institution</label>
+              {{ author_form.company_name }}
+            </div>
+            <div>
+              <label for="{{ author_form.city.id_for_label }}" class="label">City</label>
+              {{ author_form.city }}
+            </div>
+            <div>
+              <label for="{{ author_form.state.id_for_label }}" class="label">State</label>
+              {{ author_form.state }}
+            </div>
+            <div>
+              <label for="{{ author_form.country.id_for_label }}" class="label">Country</label>
+              {{ author_form.country }}
+            </div>
+            <div>
+              <label for="{{ author_form.pin_code.id_for_label }}" class="label">Pin code</label>
+              {{ author_form.pin_code }}
+            </div>
+            <div>
+              <label for="{{ author_form.nationality.id_for_label }}" class="label">Nationality</label>
+              {{ author_form.nationality }}
+            </div>
+            <div>
+              <label for="{{ author_form.district.id_for_label }}" class="label">District</label>
+              {{ author_form.district }}
+            </div>
+            <div class="md:col-span-2">
+              <label for="{{ author_form.full_address.id_for_label }}" class="label">Complete postal address</label>
+              {{ author_form.full_address }}
+            </div>
+            <div class="md:col-span-2">
+              <label for="{{ author_form.details.id_for_label }}" class="label">Extra notes / ORCID <span class="text-xs font-normal text-slate-400">(optional)</span></label>
+              {{ author_form.details }}
+              {% for error in author_form.details.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+          </div>
+          {{ author_form.id }}
+          {% if author_form.non_field_errors %}{% for error in author_form.non_field_errors %}<p class="field-error">{{ error }}</p>{% endfor %}{% endif %}
+        </div>
+        {% endfor %}
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
+          <p class="text-xs text-slate-500">{% include 'tracker/_icon.html' with name='lock' cls='h-3.5 w-3.5 inline align-[-2px] text-slate-400' %} Booked slots and the slot count cannot change after creation — edit the profile details only.</p>
+          <button type="submit" class="btn-primary">
+            {% include 'tracker/_icon.html' with name='check-circle' cls='h-4.5 w-4.5' %} Save authors
+          </button>
+        </div>
+      </form>
+      {% else %}
+      {# ---------- Accounts / other viewers: read-only list ---------- #}
+      <ol class="divide-y divide-slate-100">
+        {% for author in authors %}
+        <li class="flex items-start gap-4 px-6 py-4">
+          <span class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-800">{{ author.position }}</span>
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-baseline gap-x-2">
+              <p class="font-semibold text-slate-800">{{ author.name }}</p>
+              <span class="text-xs font-medium text-slate-400">{{ author.position_label }}</span>
+            </div>
+            {% if author.designation or author.department or author.company_name %}
+            <p class="mt-0.5 text-sm text-slate-500">
+              {{ author.designation }}{% if author.designation and author.department %} · {% endif %}{{ author.department }}{% if author.company_name %} · {{ author.company_name }}{% endif %}
+            </p>
+            {% endif %}
+            {% if author.full_address or author.city or author.state or author.country or author.pin_code %}
+            <p class="mt-0.5 flex items-start gap-1.5 text-xs leading-relaxed text-slate-500">
+              {% include 'tracker/_icon.html' with name='map-pin' cls='h-3.5 w-3.5 mt-0.5 shrink-0 text-slate-400' %}
+              <span>{{ author.full_address }}{% if author.full_address and author.city %}, {% endif %}{{ author.city }}{% if author.city and author.pin_code %} — {% endif %}{{ author.pin_code }}{{ author.state|yesno:", "|add:author.state }}{{ author.country }}</span>
+            </p>
+            {% endif %}
+            {% if author.nationality %}<p class="mt-0.5 text-xs text-slate-400">Nationality: {{ author.nationality }}</p>{% endif %}
+            {% if author.details %}<p class="mt-0.5 text-sm leading-relaxed text-slate-500">{{ author.details }}</p>{% endif %}
+            {% if author.email or author.phone %}
+            <p class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+              {% if author.email %}<a href="mailto:{{ author.email }}" class="inline-flex min-w-0 items-center gap-1.5 font-medium text-teal-700 hover:underline" title="Email {{ author.name }}">{% include 'tracker/_icon.html' with name='mail' cls='h-3.5 w-3.5 shrink-0' %} <span class="truncate">{{ author.email }}</span></a>{% endif %}
+              {% if author.phone %}<a href="tel:{{ author.phone }}" class="inline-flex items-center gap-1.5 font-medium text-teal-700 hover:underline" title="Call {{ author.name }}">{% include 'tracker/_icon.html' with name='phone' cls='h-3.5 w-3.5 shrink-0' %} {{ author.phone }}</a>{% endif %}
+            </p>
+            {% endif %}
+          </div>
+        </li>
+        {% empty %}
+        <li class="px-6 py-8 text-center text-sm text-slate-500">No authors recorded.</li>
+        {% endfor %}
+      </ol>
+      {% endif %}
+    </section>
+
+    <section id="payments-section" class="card overflow-hidden">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-5">
+        <div>
+          <h2 class="flex items-center gap-2 text-lg font-bold tracking-tight text-slate-900">
+            {% include 'tracker/_icon.html' with name='receipt' cls='h-5 w-5 text-slate-400' %} Payment installments
+          </h2>
+          <p class="mt-0.5 text-sm text-slate-500">
+            {% if can_manage_payments %}You can add the remaining payments and edit uncleared rows — Verified payments are locked by Accounts (data immutability, FTSD 7.0).{% else %}Verification trail maintained by the Accounts team.{% endif %}
+          </p>
+        </div>
+        {# Live schedule status: payable vs what the BDE has scheduled so far #}
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20" title="Sale value − discount">Payable ₹{{ project.net_value|floatformat:0|intcomma }}</span>
+          <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20" title="Sum of every installment scheduled so far">Scheduled ₹{{ total_scheduled|floatformat:0|intcomma }}</span>
+          {% if remaining > 0 %}
+          <span class="badge bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-600/20" title="Not every payment is scheduled yet — the owning BDE adds it over time">{% include 'tracker/_icon.html' with name='clock' cls='h-3.5 w-3.5' %} ₹{{ remaining|floatformat:0|intcomma }} to schedule</span>
+          {% elif remaining == 0 %}
+          <span class="badge bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-600/20">{% include 'tracker/_icon.html' with name='check-circle' cls='h-3.5 w-3.5' %} Fully scheduled</span>
+          {% else %}
+          <span class="badge bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-600/20">{% include 'tracker/_icon.html' with name='alert-triangle' cls='h-3.5 w-3.5' %} ₹{{ remaining|floatformat:0|intcomma }} over-scheduled</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="overflow-x-auto scroll-thin">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="th">Phase</th>
+              <th class="th">Amount (₹)</th>
+              <th class="th">Paid by</th>
+              <th class="th">Transaction ref</th>
+              <th class="th">Mode / date</th>
+              <th class="th">Proof</th>
+              <th class="th">Submitted by</th>
+              <th class="th">Cleared</th>
+              {% if can_manage_payments %}<th class="th">Manage</th>{% endif %}
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 bg-white">
+            {% for row in installment_rows %}
+            {% with inst=row.inst form=row.form %}
+            <tr{% if inst.verification_status == 'REJECTED' %} class="bg-rose-50/40"{% endif %}>
+              <td class="td">
+                <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">#{{ inst.installment_number }} · {{ inst.get_payment_type_display }}</span>
+                <p class="mt-0.5 text-[10px] font-medium text-slate-400" title="Database entry ID (visible to Accounts and Admin)">Entry ID {{ inst.pk }}</p>
+                {% if inst.remarks %}<p class="mt-0.5 max-w-[160px] truncate text-[11px] text-slate-400" title="{{ inst.remarks }}">{{ inst.remarks }}</p>{% endif %}
+              </td>
+              <td class="td font-semibold text-slate-900">₹{{ inst.amount_paid|floatformat:0|intcomma }}</td>
+              <td class="td">
+                {# Authors pay individually -- the paying author travels with every payment row #}
+                {% if inst.author %}
+                <p class="max-w-[150px] truncate text-sm font-medium text-slate-800" title="{{ inst.author.name }} ({{ inst.author.position_label }})">{{ inst.author.name }}</p>
+                <p class="text-[10px] font-medium text-slate-400">{{ inst.author.position_label }}</p>
+                {% else %}
+                <span class="text-xs italic text-slate-400" title="Legacy row — the payer can be linked when the payment is edited">Not linked</span>
+                {% endif %}
+              </td>
+              <td class="td font-mono text-xs text-slate-600">{{ inst.transaction_ref }}</td>
+              <td class="td text-xs text-slate-600">
+                <p>{{ inst.get_payment_mode_display }}</p>
+                {% if inst.payment_date %}<p class="text-slate-400">{{ inst.payment_date|date:"d M Y" }}</p>{% endif %}
+              </td>
+              <td class="td">
+                {% if inst.has_proof %}
+                <a href="{% url 'tracker:installment_proof_file' inst.pk %}{{ qp }}" target="_blank" rel="noopener noreferrer" class="inline-flex h-9 items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-2.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100" aria-label="Open payment proof for {{ inst.transaction_ref|escape }}" title="Open payment proof ({{ inst.proof_file_name }})">
+                  {% include 'tracker/_icon.html' with name='image' cls='h-4 w-4' %} View
+                </a>
+                {% else %}
+                <span class="inline-flex items-center gap-1 text-xs italic text-slate-400" title="No proof photo attached">{% include 'tracker/_icon.html' with name='image' cls='h-3.5 w-3.5 text-slate-300' %} None</span>
+                {% endif %}
+              </td>
+              <td class="td text-xs text-slate-600">{{ inst.submitted_by.get_full_name|default:inst.submitted_by.username }}</td>
+              <td class="td">
+                {% if inst.verification_status == 'VERIFIED' %}
+                  <span class="badge bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-600/20">{% include 'tracker/_icon.html' with name='check-circle' cls='h-3.5 w-3.5' %} Verified</span>
+                  <p class="mt-0.5 text-xs text-slate-500">by {{ inst.verified_by.get_full_name|default:inst.verified_by.username }} · {{ inst.verification_date|date:"d M Y, H:i" }}</p>
+                {% elif inst.verification_status == 'REJECTED' %}
+                  <span class="badge bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-600/20">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} Rejected</span>
+                  <p class="mt-0.5 text-xs text-slate-500">by {{ inst.verified_by.get_full_name|default:inst.verified_by.username }} · {{ inst.verification_date|date:"d M Y, H:i" }}</p>
+                {% else %}
+                  <span class="badge bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-600/20">{% include 'tracker/_icon.html' with name='clock' cls='h-3.5 w-3.5' %} On review</span>
+                {% endif %}
+              </td>
+              {% if can_manage_payments %}
+              <td class="td">
+                {% if inst.verification_status == 'VERIFIED' %}
+                <span class="inline-flex items-center gap-1 text-xs italic text-slate-400" title="Verified by Accounts — locked (data immutability); ask Accounts to revert first (the approval flow)">{% include 'tracker/_icon.html' with name='lock' cls='h-3.5 w-3.5 text-slate-300' %} Locked</span>
+                {% else %}
+                <div class="flex items-center gap-1.5">
+                  <button type="button" class="inst-edit-btn inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500" data-inst="{{ inst.pk }}" aria-label="Edit this uncleared payment" aria-expanded="{% if form.errors %}true{% else %}false{% endif %}">
+                    {% include 'tracker/_icon.html' with name='pencil' cls='h-3.5 w-3.5' %} Edit
+                  </button>
+                  <form method="post" action="{% url 'tracker:installment_delete' inst.pk %}{{ qp }}" class="inline" onsubmit="return confirm('Remove this payment of ₹{{ inst.amount_paid|floatformat:0|intcomma }}? The amount goes back to to-schedule and you can add a fresh one anytime.');">
+                    {% csrf_token %}
+                    <button type="submit" class="inline-flex h-9 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400" aria-label="Remove this uncleared payment">
+                      {% include 'tracker/_icon.html' with name='trash-2' cls='h-3.5 w-3.5' %} Remove
+                    </button>
+                  </form>
+                </div>
+                {% endif %}
+              </td>
+              {% endif %}
+            </tr>
+            {% if can_manage_payments and form %}
+            {% comment %}---- Collapsible inline edit form for this UNCLEARED row ----
+               (stays OPEN after a failed save so the errors stay visible) ----{% endcomment %}
+            <tr id="edit-row-{{ inst.pk }}" class="inst-edit-row{% if not form.errors %} hidden{% endif %}">
+              <td colspan="9" class="bg-slate-50/80 px-6 py-4">
+                <form method="post" action="{% url 'tracker:installment_edit' inst.pk %}{{ qp }}" enctype="multipart/form-data" class="space-y-3">
+                  {% csrf_token %}
+                  <p class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    {% include 'tracker/_icon.html' with name='pencil' cls='h-3.5 w-3.5' %} Edit payment — #{{ inst.installment_number }} {{ inst.get_payment_type_display }} · ₹{{ inst.amount_paid|floatformat:0|intcomma }}{% if inst.verification_status == 'REJECTED' %} <span class="text-rose-600">(rejected — saving re-queues it as Pending)</span>{% endif %}
+                  </p>
+                  <div class="grid gap-3 md:grid-cols-3">
+                    <div>
+                      <label for="{{ form.payment_type.id_for_label }}" class="label">Phase <span class="text-rose-500">*</span></label>
+                      {{ form.payment_type }}
+                      {% for error in form.payment_type.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+                    </div>
+                    <div>
+                      <label for="{{ form.amount_paid.id_for_label }}" class="label">Amount paid (₹) <span class="text-rose-500">*</span></label>
+                      {{ form.amount_paid }}
+                      {% for error in form.amount_paid.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+                    </div>
+                    <div>
+                      <label for="{{ form.author.id_for_label }}" class="label">Paid by author <span class="text-rose-500">*</span></label>
+                      {{ form.author }}
+                      {% for error in form.author.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+                    </div>
+                    <div>
+                      <label for="{{ form.transaction_ref.id_for_label }}" class="label">Transaction ref <span class="text-rose-500">*</span></label>
+                      {{ form.transaction_ref }}
+                      {% for error in form.transaction_ref.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+                    </div>
+                    <div>
+                      <label for="{{ form.payment_mode.id_for_label }}" class="label">Payment mode</label>
+                      {{ form.payment_mode }}
+                    </div>
+                    <div>
+                      <label for="{{ form.payment_date.id_for_label }}" class="label">Payment date</label>
+                      {{ form.payment_date }}
+                    </div>
+                    <div>
+                      <label for="{{ form.remarks.id_for_label }}" class="label">Remarks</label>
+                      {{ form.remarks }}
+                    </div>
+                  </div>
+                  <div class="border-t border-slate-200/80 pt-3" data-proof-scope>
+                    <label for="{{ form.new_proof.id_for_label }}" class="label flex items-center gap-1.5">
+                      {% include 'tracker/_icon.html' with name='image' cls='h-3.5 w-3.5 text-slate-400' %} Replace proof photo <span class="text-xs font-normal text-slate-400">(optional — keeps the current one when empty)</span>
+                    </label>
+                    {{ form.new_proof }}
+                    <div class="flex flex-wrap items-center gap-2.5">
+                      <button type="button" class="proof-upload-btn inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
+                        {% include 'tracker/_icon.html' with name='upload' cls='h-4 w-4' %} Upload new photo
+                      </button>
+                      <span class="proof-file-chip inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs text-slate-400">
+                        <span class="proof-chip-empty-icon shrink-0">{% include 'tracker/_icon.html' with name='image' cls='h-3.5 w-3.5' %}</span>
+                        <span class="proof-chip-done-icon hidden shrink-0 text-emerald-600">{% include 'tracker/_icon.html' with name='check-circle' cls='h-3.5 w-3.5' %}</span>
+                        <span class="proof-file-name truncate">{% if inst.has_proof %}Keeps current: {{ inst.proof_file_name }}{% else %}No proof yet — pick a file{% endif %}</span>
+                      </span>
+                    </div>
+                    <p class="mt-1 text-[11px] text-slate-400">JPG, PNG, WebP or PDF up to 10 MB. Accounts re-verifies every change.</p>
+                    {% for error in form.new_proof.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+                  </div>
+                  {% if form.non_field_errors %}{% for error in form.non_field_errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}{% endif %}
+                  <div class="flex flex-wrap items-center justify-end gap-2.5 border-t border-slate-200/80 pt-3">
+                    <button type="button" class="inst-cancel-btn btn-secondary !px-3.5 !py-2 !text-xs">Cancel</button>
+                    <button type="submit" class="btn-primary !px-3.5 !py-2 !text-xs">
+                      {% include 'tracker/_icon.html' with name='check-circle' cls='h-4 w-4' %} Save payment
+                    </button>
+                  </div>
+                </form>
+              </td>
+            </tr>
+            {% endif %}
+            {% endwith %}
+            {% empty %}
+            <tr>
+              <td colspan="{% if can_manage_payments %}9{% else %}8{% endif %}" class="px-6 py-10 text-center">
+                {% include 'tracker/_icon.html' with name='receipt' cls='mx-auto h-8 w-8 text-slate-300' %}
+                <p class="mt-2 text-sm font-medium text-slate-500">No payments scheduled yet{% if can_manage_payments %} — add the first one below.{% else %}.{% endif %}</p>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if can_manage_payments %}
+      {# ---- Owning BDE: add the remaining payments over time ---- #}
+      {% if add_payment_form %}
+      <div class="border-t border-slate-200 bg-slate-50/50 px-6 py-5">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="flex items-center gap-2 text-sm font-bold text-slate-800">
+              {% include 'tracker/_icon.html' with name='plus' cls='h-4 w-4 text-emerald-600' %} Add a payment
+            </h3>
+            <p class="mt-0.5 text-xs text-slate-500">Only <span class="font-semibold text-amber-700">₹{{ remaining|floatformat:0|intcomma }}</span> is left to schedule on this project — add it in one or more payments as the money arrives.</p>
+          </div>
+        </div>
+        <form method="post" action="{% url 'tracker:project_payment_add' project.pk %}{{ qp }}" enctype="multipart/form-data" class="space-y-3">
+          {% csrf_token %}
+          <div class="grid gap-3 md:grid-cols-3">
+            <div>
+              <label for="{{ add_payment_form.payment_type.id_for_label }}" class="label">Phase <span class="text-rose-500">*</span></label>
+              {{ add_payment_form.payment_type }}
+              {% for error in add_payment_form.payment_type.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ add_payment_form.amount_paid.id_for_label }}" class="label">Amount paid (₹) <span class="text-rose-500">*</span></label>
+              {{ add_payment_form.amount_paid }}
+              {% for error in add_payment_form.amount_paid.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ add_payment_form.author.id_for_label }}" class="label">Paid by author <span class="text-rose-500">*</span></label>
+              {{ add_payment_form.author }}
+              {% for error in add_payment_form.author.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ add_payment_form.transaction_ref.id_for_label }}" class="label">Transaction ref (UTR) <span class="text-rose-500">*</span></label>
+              {{ add_payment_form.transaction_ref }}
+              {% for error in add_payment_form.transaction_ref.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ add_payment_form.payment_mode.id_for_label }}" class="label">Payment mode</label>
+              {{ add_payment_form.payment_mode }}
+            </div>
+            <div>
+              <label for="{{ add_payment_form.payment_date.id_for_label }}" class="label">Payment date</label>
+              {{ add_payment_form.payment_date }}
+            </div>
+            <div>
+              <label for="{{ add_payment_form.remarks.id_for_label }}" class="label">Remarks</label>
+              {{ add_payment_form.remarks }}
+            </div>
+          </div>
+          <div class="border-t border-slate-200/80 pt-3" data-proof-scope>
+            <label for="{{ add_payment_form.proof_image.id_for_label }}" class="label flex items-center gap-1.5">
+              {% include 'tracker/_icon.html' with name='image' cls='h-3.5 w-3.5 text-slate-400' %} Transaction photo / screenshot <span class="text-rose-500">*</span>
+            </label>
+            {{ add_payment_form.proof_image }}
+            <div class="flex flex-wrap items-center gap-2.5">
+              <button type="button" class="proof-upload-btn inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
+                {% include 'tracker/_icon.html' with name='upload' cls='h-4 w-4' %} Upload photo
+              </button>
+              <span class="proof-file-chip inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs text-slate-400">
+                <span class="proof-chip-empty-icon shrink-0">{% include 'tracker/_icon.html' with name='image' cls='h-3.5 w-3.5' %}</span>
+                <span class="proof-chip-done-icon hidden shrink-0 text-emerald-600">{% include 'tracker/_icon.html' with name='check-circle' cls='h-3.5 w-3.5' %}</span>
+                <span class="proof-file-name truncate">No file chosen — required</span>
+              </span>
+            </div>
+            <p class="mt-1 text-[11px] text-slate-400">Mandatory — Accounts clears this payment against your photo. JPG, PNG, WebP or PDF up to 10 MB.</p>
+            {% for error in add_payment_form.proof_image.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+          </div>
+          {% if add_payment_form.non_field_errors %}{% for error in add_payment_form.non_field_errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}{% endif %}
+          <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/80 pt-3">
+            <p class="text-xs text-slate-500">{% include 'tracker/_icon.html' with name='shield' cls='h-3.5 w-3.5 inline align-[-2px] text-emerald-600' %} Each payment you add lands in the Accounts clearing queue — you cannot self-verify.</p>
+            <button type="submit" class="btn-primary">
+              {% include 'tracker/_icon.html' with name='plus' cls='h-4.5 w-4.5' %} Add payment
+            </button>
+          </div>
+        </form>
+      </div>
+      {% elif remaining == 0 %}
+      <div class="flex items-center gap-2.5 border-t border-emerald-100 bg-emerald-50/60 px-6 py-4 text-sm text-emerald-800">
+        {% include 'tracker/_icon.html' with name='check-circle' cls='h-4.5 w-4.5 shrink-0' %}
+        <span>Every rupee of this project is scheduled (₹{{ project.net_value|floatformat:0|intcomma }}) — nothing left to add. Accounts clears each payment above.</span>
+      </div>
+      {% else %}
+      <div class="flex items-center gap-2.5 border-t border-rose-100 bg-rose-50/60 px-6 py-4 text-sm text-rose-800">
+        {% include 'tracker/_icon.html' with name='alert-triangle' cls='h-4.5 w-4.5 shrink-0' %}
+        <span>This project is over-scheduled by ₹{{ remaining|floatformat:0|intcomma }} — lower or remove an uncleared payment above to bring it back to ₹{{ project.net_value|floatformat:0|intcomma }}.</span>
+      </div>
+      {% endif %}
+      {% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block page_scripts %}
+{% if can_edit_project %}
+{# ================================================================== #}
+{#  "Edit project" card (owning BDE): header button toggles it, Cancel #}
+{#  hides it again; after a FAILED save the server re-renders the page #}
+{#  with the bound form, which keeps the card open (hidden class is   #}
+{#  skipped when project_edit_form has errors).                        #}
+{# ================================================================== #}
+<script>
+(function () {
+  'use strict';
+  var card = document.getElementById('project-edit-card');
+  var btn = document.getElementById('project-edit-btn');
+  var cancelBtn = document.getElementById('project-edit-cancel');
+  if (!card || !btn) return;
+
+  function setOpen(open) {
+    card.classList.toggle('hidden', !open);
+    btn.setAttribute('aria-expanded', String(open));
+    if (open) {
+      var titleInput = card.querySelector('input[name="title"]');
+      if (titleInput) titleInput.focus();
+      card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+
+  btn.addEventListener('click', function () {
+    setOpen(card.classList.contains('hidden'));
+  });
+  if (cancelBtn) cancelBtn.addEventListener('click', function () { setOpen(false); });
+})();
+</script>
+{% endif %}
+
+{% if can_manage_payments %}
+{# ================================================================== #}
+{#  Payment management (owning BDE only):                             #}
+{#   - button-style proof upload (add form + every inline edit form)  #}
+{#   - collapsible inline edit rows (one open at a time)              #}
+{#  Removal uses a native confirm() on its little inline <form>.      #}
+{# ================================================================== #}
+<script>
+(function () {
+  'use strict';
+  var card = document.getElementById('payments-section');
+  if (!card) return;
+
+  var CHIP_ON = 'proof-file-chip inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs font-medium text-emerald-700';
+  var CHIP_OFF = 'proof-file-chip inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs text-slate-400';
+
+  card.addEventListener('click', function (e) {
+    /* Button-style upload: open the file picker scoped to this form. */
+    var uploadBtn = e.target.closest('.proof-upload-btn');
+    if (uploadBtn) {
+      var scope = uploadBtn.closest('[data-proof-scope]');
+      var fileInput = scope && scope.querySelector('.proof-file-input');
+      if (fileInput) fileInput.click();
+      return;
+    }
+
+    /* Edit button: toggle this row's inline form (one open at a time). */
+    var editBtn = e.target.closest('.inst-edit-btn');
+    if (editBtn) {
+      var row = document.getElementById('edit-row-' + editBtn.dataset.inst);
+      if (!row) return;
+      var willShow = row.classList.contains('hidden');
+      card.querySelectorAll('.inst-edit-row:not(.hidden)').forEach(function (r) {
+        r.classList.add('hidden');
+      });
+      card.querySelectorAll('.inst-edit-btn').forEach(function (b) {
+        b.setAttribute('aria-expanded', 'false');
+      });
+      row.classList.toggle('hidden', !willShow);
+      editBtn.setAttribute('aria-expanded', String(willShow));
+      if (willShow) {
+        var amount = row.querySelector('.inst-amount-input');
+        if (amount) amount.focus();
+        row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      return;
+    }
+
+    /* Cancel button: just hide the inline form again. */
+    var cancelBtn = e.target.closest('.inst-cancel-btn');
+    if (cancelBtn) {
+      var editRow = cancelBtn.closest('.inst-edit-row');
+      if (editRow) editRow.classList.add('hidden');
+    }
+  });
+
+  /* Reflect a picked proof file on the chip next to the Upload button. */
+  card.addEventListener('change', function (e) {
+    if (!e.target.classList || !e.target.classList.contains('proof-file-input')) return;
+    var scope = e.target.closest('[data-proof-scope]');
+    if (!scope) return;
+    var chip = scope.querySelector('.proof-file-chip');
+    var nameEl = scope.querySelector('.proof-file-name');
+    var emptyIcon = scope.querySelector('.proof-chip-empty-icon');
+    var doneIcon = scope.querySelector('.proof-chip-done-icon');
+    var hasFile = e.target.files && e.target.files.length > 0;
+    if (nameEl) nameEl.textContent = hasFile ? e.target.files[0].name : (nameEl.dataset.default || 'No file chosen');
+    if (chip) chip.className = hasFile ? CHIP_ON : CHIP_OFF;
+    if (emptyIcon && doneIcon) {
+      emptyIcon.classList.toggle('hidden', hasFile);
+      doneIcon.classList.toggle('hidden', !hasFile);
+    }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

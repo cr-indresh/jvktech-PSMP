@@ -1,0 +1,171 @@
+{% extends 'tracker/base.html' %}
+{# ================================================================== #}
+{#  audit_log.html -- ADMIN: the audit trail (FTSD 7.0).               #}
+{#  EVERY recorded operation of every role (BDE / Accountant / Admin), #}
+{#  filterable by role, user and action, paginated through the full    #}
+{#  history.  The Changes column renders a readable field-by-field     #}
+{#  old -> new diff -- never raw JSON.                                 #}
+{# ================================================================== #}
+{% load humanize %}
+{% block title %}Audit Trail{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold tracking-tight text-slate-900">Audit Trail</h1>
+  <p class="mt-1 text-sm text-slate-500">Every action by every role — sign-ins, sign-outs, projects, authors, payments, verifications, lifecycle changes, team and catalogue operations — with readable old → new changes (FTSD §7.0).</p>
+</div>
+
+{# ---------------------------- filter bar --------------------------- #}
+<section class="card mb-6">
+  <form method="get" action="" class="grid gap-4 px-6 py-5 md:grid-cols-4">
+    <div>
+      <label for="flt-role" class="label">Role</label>
+      <select id="flt-role" name="role" class="input" onchange="document.getElementById('flt-user').value=''">
+        <option value="">All roles</option>
+        {% for value, label in role_choices %}
+        <option value="{{ value }}" {% if role_filter == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="flt-user" class="label">Team member</label>
+      <select id="flt-user" name="user" class="input">
+        <option value="">Everyone</option>
+        {% for u in audit_users %}
+        <option value="{{ u.username }}" {% if user_filter == u.username %}selected{% endif %}>{{ u.get_full_name|default:u.username }} ({{ u.username }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="flt-action" class="label">Action</label>
+      <select id="flt-action" name="action" class="input">
+        <option value="">All actions</option>
+        {% for value, label in action_choices %}
+        <option value="{{ value }}" {% if action_filter == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="flex items-end gap-2">
+      <button type="submit" class="btn btn-primary h-10 flex-1">
+        {% include 'tracker/_icon.html' with name='filter' cls='h-4 w-4' %} Apply filters
+      </button>
+      <a href="{% url 'tracker:audit_log' %}" class="btn h-10 border border-slate-300 bg-white text-slate-600 hover:bg-slate-50">Clear</a>
+    </div>
+  </form>
+</section>
+
+<section class="card overflow-hidden">
+  <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-5">
+    <div>
+      <h2 class="text-lg font-bold tracking-tight text-slate-900">
+        {% if user_filter %}Every action by {{ user_filter }}{% elif role_filter %}Actions by role: {{ role_filter }}{% else %}All operations{% endif %}
+      </h2>
+      <p class="mt-0.5 text-sm text-slate-500">Readable field-by-field old → new values — expand a row for the full diff.</p>
+    </div>
+    <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">{{ total|intcomma }} entr{{ total|pluralize:"y,ies" }}</span>
+  </div>
+
+  <div class="max-h-[680px] overflow-auto scroll-thin">
+    <table class="min-w-full divide-y divide-slate-200">
+      <thead class="sticky top-0 z-10 bg-slate-50">
+        <tr>
+          <th class="th">When</th>
+          <th class="th">User</th>
+          <th class="th">Action</th>
+          <th class="th">Entity</th>
+          <th class="th">Changes (old → new)</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100 bg-white">
+        {% for entry in entries %}
+        <tr>
+          <td class="td whitespace-nowrap text-xs text-slate-500">{{ entry.timestamp|date:"d M Y, H:i" }}</td>
+          <td class="td whitespace-nowrap text-xs">
+            <p class="font-semibold text-slate-700">{{ entry.user_name|default:'system' }}</p>
+            {% if entry.user.profile.role %}
+            <p class="mt-0.5 text-[11px] text-slate-400">{{ entry.user.profile.get_role_display }}</p>
+            {% endif %}
+          </td>
+          <td class="td">
+            {% if entry.action == 'CREATE' %}
+            <span class="badge bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-600/20">{% include 'tracker/_icon.html' with name='plus' cls='h-3.5 w-3.5' %} Create</span>
+            {% elif entry.action == 'UPDATE' %}
+            <span class="badge bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-600/20">{% include 'tracker/_icon.html' with name='pencil' cls='h-3.5 w-3.5' %} Update</span>
+            {% elif entry.action == 'DELETE' %}
+            <span class="badge bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-600/20">{% include 'tracker/_icon.html' with name='trash-2' cls='h-3.5 w-3.5' %} Delete</span>
+            {% elif entry.action == 'LOGIN' %}
+            <span class="badge bg-teal-100 text-teal-800 ring-1 ring-inset ring-teal-600/20">{% include 'tracker/_icon.html' with name='shield' cls='h-3.5 w-3.5' %} Sign-in</span>
+            {% else %}
+            <span class="badge bg-slate-200 text-slate-700 ring-1 ring-inset ring-slate-600/20">{% include 'tracker/_icon.html' with name='logout' cls='h-3.5 w-3.5' %} Sign-out</span>
+            {% endif %}
+          </td>
+          <td class="td min-w-[180px] max-w-[280px]">
+            <p class="truncate font-semibold text-slate-800" title="{{ entry.entity_label }}">{{ entry.entity_label|default:entry.entity_type }}</p>
+            <p class="mt-0.5 text-[11px] text-slate-400">{{ entry.entity_type }}{% if entry.entity_id %} #{{ entry.entity_id }}{% endif %}</p>
+          </td>
+          <td class="td max-w-[460px]">
+            {% if entry.old_values or entry.new_values %}
+            {# readable one-line digest -- always visible #}
+            <p class="text-xs leading-relaxed text-slate-600">{{ entry.changes_summary|default:'—' }}</p>
+            {% if entry.change_rows %}
+            <details class="mt-1 text-xs">
+              <summary class="cursor-pointer font-medium text-emerald-700 hover:text-emerald-800">Show full diff</summary>
+              <div class="mt-2 overflow-hidden rounded-lg border border-slate-200">
+                <table class="min-w-full divide-y divide-slate-100">
+                  <thead class="bg-slate-50">
+                    <tr>
+                      <th class="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">Field</th>
+                      <th class="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">Old</th>
+                      <th class="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">New</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100">
+                    {% for row in entry.change_rows %}
+                    <tr class="{% if row.changed %}bg-amber-50/60{% endif %}">
+                      <td class="px-3 py-1.5 align-top text-[11px] font-semibold {% if row.changed %}text-slate-800{% else %}text-slate-400{% endif %}">{{ row.label }}</td>
+                      <td class="px-3 py-1.5 align-top text-[11px] {% if row.changed %}text-rose-700 line-through decoration-rose-300{% else %}text-slate-400{% endif %}">{{ row.old }}</td>
+                      <td class="px-3 py-1.5 align-top text-[11px] {% if row.changed %}font-semibold text-emerald-700{% else %}text-slate-400{% endif %}">{{ row.new }}</td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+            {% endif %}
+            {% else %}
+            <span class="text-xs italic text-slate-400">No value snapshot</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="5" class="px-6 py-14 text-center">
+            {% include 'tracker/_icon.html' with name='file-text' cls='mx-auto h-8 w-8 text-slate-300' %}
+            <p class="mt-2 text-sm font-medium text-slate-500">No operations match the selected filters.</p>
+            <p class="mt-1 text-xs text-slate-400">Try clearing the filters — every recorded action is kept here.</p>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# ------------------------ pagination footer ----------------------- #}
+  {% if page_obj.paginator.num_pages > 1 %}
+  <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/60 px-6 py-4">
+    <p class="text-xs text-slate-500">
+      Page <span class="font-semibold text-slate-700">{{ page_obj.number }}</span> of {{ page_obj.paginator.num_pages }}
+      · {{ total|intcomma }} entr{{ total|pluralize:"y,ies" }}{% if role_filter %} for this filter{% endif %}
+    </p>
+    <div class="flex items-center gap-2">
+      {% if page_obj.has_previous %}
+      <a href="?page={{ page_obj.previous_page_number }}{{ filter_qs }}" class="btn h-9 border border-slate-300 bg-white text-xs text-slate-600 hover:bg-slate-100">← Newer</a>
+      {% endif %}
+      {% if page_obj.has_next %}
+      <a href="?page={{ page_obj.next_page_number }}{{ filter_qs }}" class="btn h-9 border border-slate-300 bg-white text-xs text-slate-600 hover:bg-slate-100">Older →</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,1238 @@
+{% extends 'tracker/base.html' %}
+{# ================================================================== #}
+{#  bde_dashboard.html -- Sales workspace (PSMP / FTSD):               #}
+{#    - KPI cards                                                      #}
+{#    - Project creation form: the APPLICATION provisions the author   #}
+{#      slots from the service catalogue (FTSD 4.1.2), the BDE books   #}
+{#      them with full author profile data (FTSD 3.2, with a quick     #}
+{#      paste parser) and logs payment installments with mode / date / #}
+{#      remarks (FTSD 3.3).                                            #}
+{#    - "My projects" table.                                           #}
+{# ================================================================== #}
+{% load humanize %}
+{% block title %}BDE Dashboard{% endblock %}
+
+{% block content %}
+{# ================= Page header ================= #}
+<div class="mb-6 flex flex-wrap items-end justify-between gap-4">
+  <div>
+    {% if view_as %}
+    <h1 class="text-2xl font-bold tracking-tight text-slate-900">BDE Dashboard — {{ view_as.get_full_name|default:view_as.username }}</h1>
+    <p class="mt-1 text-sm text-slate-500">Read-only admin view of this sales executive's pipeline ({{ view_as_projects }} project{{ view_as_projects|pluralize }}).</p>
+    {% else %}
+    <h1 class="text-2xl font-bold tracking-tight text-slate-900">BDE Dashboard</h1>
+    <p class="mt-1 text-sm text-slate-500">Welcome back, {{ user.get_full_name|default:user.username }} — create deals, book author slots and submit payment proofs.</p>
+    {% if app_role == 'ADMIN' %}
+    <p class="mt-1 text-xs font-semibold text-emerald-700">Administrator workspace — every BDE action is yours: create deals, book author slots and submit payments.</p>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% if not view_as %}
+  <a href="#create-project" class="btn-primary">
+    {% include 'tracker/_icon.html' with name='plus' cls='h-4.5 w-4.5' %} New project
+  </a>
+  {% else %}
+  <a href="{% url 'tracker:admin_dashboard' %}{{ qp }}" class="btn-secondary">
+    {% include 'tracker/_icon.html' with name='layout-dashboard' cls='h-4.5 w-4.5' %} Exit to Admin Dashboard
+  </a>
+  {% endif %}
+</div>
+
+{# ================= Admin view-as banner ================= #}
+{% if view_as %}
+<div class="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm" role="status">
+  {% include 'tracker/_icon.html' with name='eye' cls='h-4.5 w-4.5 shrink-0 text-amber-600' %}
+  <p class="min-w-0 flex-1"><span class="font-semibold">Viewing as {{ view_as.get_full_name|default:view_as.username }}</span> — oversight view of this executive's pipeline. Open <span class="font-semibold">BDE Workspace</span> in the sidebar to create and manage deals yourself.</p>
+  <a href="{% url 'tracker:team_management' %}{{ qp }}" class="font-semibold text-amber-800 underline decoration-amber-400 underline-offset-2 hover:text-amber-900">Team management</a>
+</div>
+{% endif %}
+
+{# ================= KPI cards ================= #}
+<div id="overview" class="mb-8 grid grid-cols-2 gap-4 scroll-mt-24 lg:grid-cols-4">
+  <div class="card flex items-start gap-4 p-5">
+    <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">{% include 'tracker/_icon.html' with name='briefcase' %}</span>
+    <div class="min-w-0">
+      <p class="text-xs font-medium uppercase tracking-wide text-slate-500">My projects</p>
+      <p class="text-2xl font-bold tracking-tight text-slate-900">{{ stats.project_count }}</p>
+    </div>
+  </div>
+  <div class="card flex items-start gap-4 p-5">
+    <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-teal-100 text-teal-700">{% include 'tracker/_icon.html' with name='trending-up' %}</span>
+    <div class="min-w-0">
+      <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Net pipeline</p>
+      <p class="truncate text-2xl font-bold tracking-tight text-slate-900">₹{{ stats.net_value|floatformat:0|intcomma }}</p>
+    </div>
+  </div>
+  <div class="card flex items-start gap-4 p-5">
+    <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">{% include 'tracker/_icon.html' with name='banknote' %}</span>
+    <div class="min-w-0">
+      <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Collected (verified)</p>
+      <p class="truncate text-2xl font-bold tracking-tight text-slate-900">₹{{ stats.collected|floatformat:0|intcomma }}</p>
+    </div>
+  </div>
+  <div class="card flex items-start gap-4 p-5">
+    <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-100 text-amber-700">{% include 'tracker/_icon.html' with name='clock' %}</span>
+    <div class="min-w-0">
+      <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Awaiting verification</p>
+      <p class="text-2xl font-bold tracking-tight text-slate-900">{{ stats.pending_count }}</p>
+      <p class="truncate text-xs text-slate-500">₹{{ stats.pending_amount|floatformat:0|intcomma }} in proofs</p>
+    </div>
+  </div>
+</div>
+
+{% if not view_as %}
+{# ================= Project creation form (hidden for admin view-as) ================= #}
+<section id="create-project" class="card mb-8 scroll-mt-24 overflow-hidden">
+  <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-5">
+    <div>
+      <h2 class="text-lg font-bold tracking-tight text-slate-900">Create a new project</h2>
+      <p class="mt-0.5 text-sm text-slate-500">Pick the publication category — the app provisions the author slots; installment proofs go straight to the Accounts clearing queue.</p>
+    </div>
+    <span class="badge bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-600/20">{% include 'tracker/_icon.html' with name='users' cls='h-3.5 w-3.5' %} Slots provisioned by the app</span>
+  </div>
+
+  {{ service_info|json_script:'service-info-data' }}
+
+  <form id="create-project-form" method="post" action="{% url 'tracker:project_create' %}{{ qp }}" enctype="multipart/form-data" novalidate class="space-y-8 px-6 py-6">
+    {% csrf_token %}
+
+    {# ---------- Non-field errors ---------- #}
+    {% if form.non_field_errors %}
+      <div class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3" role="alert">
+        {% for error in form.non_field_errors %}<p class="flex items-center gap-2 text-sm font-medium text-rose-700">{% include 'tracker/_icon.html' with name='alert-triangle' cls='h-4 w-4 shrink-0' %} {{ error }}</p>{% endfor %}
+      </div>
+    {% endif %}
+
+    {# ---------- 0. Deal owner (ADMIN only: attribute the deal) ---------- #}
+    {% if app_role == 'ADMIN' %}
+    <div class="rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-4">
+      <label for="id_deal_owner" class="label">Deal owner (sales executive)</label>
+      <select id="id_deal_owner" name="deal_owner" class="input max-w-md">
+        <option value="">Myself — {{ user.get_full_name|default:user.username }} (administrator)</option>
+        {% for b in nav_bdes %}
+        <option value="{{ b.pk }}">{{ b.get_full_name|default:b.username }} ({{ b.username }})</option>
+        {% endfor %}
+      </select>
+      <p class="mt-1.5 text-xs font-medium text-emerald-700">You are creating this project as an administrator — pick who owns the deal (any sales executive, or yourself).</p>
+    </div>
+    {% endif %}
+
+    {# ---------- 1. Project details ---------- #}
+    <fieldset>
+      <legend class="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-500">
+        <span class="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-600 text-xs font-bold text-white">1</span> Project &amp; commercial details
+      </legend>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div class="md:col-span-2">
+          <label for="{{ form.title.id_for_label }}" class="label">Title of article / book / patent <span class="text-rose-500">*</span></label>
+          {{ form.title }}
+          {% for error in form.title.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+        </div>
+        <div class="md:col-span-2">
+          <label for="{{ form.service_type.id_for_label }}" class="label">Publication category <span class="text-rose-500">*</span></label>
+          {{ form.service_type }}
+          {% for error in form.service_type.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+          <p id="slots-info" class="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-emerald-700"></p>
+        </div>
+        <div class="grid grid-cols-2 gap-4 md:col-span-2">
+          <div>
+            <label for="{{ form.sale_value.id_for_label }}" class="label">Agreed sale value (₹) <span class="text-rose-500">*</span></label>
+            {{ form.sale_value }}
+            {% for error in form.sale_value.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ form.discount_value.id_for_label }}" class="label">Discount applied (₹)</label>
+            {{ form.discount_value }}
+            {% for error in form.discount_value.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+          </div>
+        </div>
+        <div class="md:col-span-2">
+          <label for="{{ form.remarks.id_for_label }}" class="label">Remarks</label>
+          {{ form.remarks }}
+        </div>
+      </div>
+    </fieldset>
+
+    {# ---------- 2. Authors (dynamic slot booking) ---------- #}
+    <fieldset>
+      <legend class="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-500">
+        <span class="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-600 text-xs font-bold text-white">2</span> Author slots
+      </legend>
+
+      {# Quick paste parser (FTSD transcript 3: bulk paste client details) #}
+      <div class="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+        <label for="quick-paste-input" class="label flex items-center gap-1.5">
+          {% include 'tracker/_icon.html' with name='file-text' cls='h-3.5 w-3.5 text-emerald-600' %} Quick paste client details <span class="text-xs font-normal text-slate-400">(optional — from WhatsApp / email)</span>
+        </label>
+        <textarea id="quick-paste-input" rows="3" class="input min-h-[70px] font-mono text-xs" placeholder="One author per block, blank line between authors. Key:value lines (Name:, Email:, Phone:, Designation:, Department:, Company:, City:, State:, Country:, Pin:) or comma/pipe separated (name, email, phone) — e.g.&#10;Dr. Meera Iyer, meera@university.edu, +91 98xxxxxx00"></textarea>
+        <div class="mt-2 flex flex-wrap items-center gap-3">
+          <button type="button" id="quick-paste-btn" class="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
+            {% include 'tracker/_icon.html' with name='plus' cls='h-4 w-4' %} Parse &amp; fill authors
+          </button>
+          <p class="text-[11px] text-slate-500">Fills the next empty author rows below — missing fields stay blank for you to complete.</p>
+        </div>
+      </div>
+
+      <div id="author-rows" class="mb-3 space-y-3">
+        {% for author_form in author_formset %}
+        <div class="formset-row author-row rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+          <div class="mb-3 flex items-center justify-between">
+            <span class="author-number-badge inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+              {% include 'tracker/_icon.html' with name='user' cls='h-4 w-4 text-slate-400' %} <span class="author-number">1</span> <span class="author-position-label text-slate-400 font-medium"></span>
+            </span>
+            <button type="button" class="remove-author-btn inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400" aria-label="Remove this author">
+              {% include 'tracker/_icon.html' with name='trash-2' cls='h-4.5 w-4.5' %}
+            </button>
+          </div>
+          <div class="grid gap-3 md:grid-cols-2">
+            <div>
+              <label for="{{ author_form.name.id_for_label }}" class="label">Author full name <span class="text-rose-500">*</span></label>
+              {{ author_form.name }}
+              {% for error in author_form.name.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ author_form.email.id_for_label }}" class="label">Email ID <span class="text-rose-500">*</span></label>
+              {{ author_form.email }}
+              {% for error in author_form.email.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ author_form.phone.id_for_label }}" class="label">Mobile number <span class="text-rose-500">*</span></label>
+              {{ author_form.phone }}
+              {% for error in author_form.phone.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ author_form.designation.id_for_label }}" class="label">Designation</label>
+              {{ author_form.designation }}
+            </div>
+            <div>
+              <label for="{{ author_form.department.id_for_label }}" class="label">Department</label>
+              {{ author_form.department }}
+            </div>
+            <div>
+              <label for="{{ author_form.company_name.id_for_label }}" class="label">Company / Institution</label>
+              {{ author_form.company_name }}
+            </div>
+          </div>
+          <button type="button" class="author-extra-toggle mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 transition hover:text-emerald-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded" aria-expanded="false">
+            {% include 'tracker/_icon.html' with name='map-pin' cls='h-3.5 w-3.5' %} Address &amp; nationality <span class="author-extra-caret transition-transform">▾</span>
+          </button>
+          <div class="author-extra mt-3 hidden grid-cols-2 gap-3 border-t border-slate-200/80 pt-3 md:grid-cols-3">
+            <div>
+              <label for="{{ author_form.city.id_for_label }}" class="label">City</label>
+              {{ author_form.city }}
+            </div>
+            <div>
+              <label for="{{ author_form.district.id_for_label }}" class="label">District</label>
+              {{ author_form.district }}
+            </div>
+            <div>
+              <label for="{{ author_form.state.id_for_label }}" class="label">State</label>
+              {{ author_form.state }}
+            </div>
+            <div>
+              <label for="{{ author_form.country.id_for_label }}" class="label">Country</label>
+              {{ author_form.country }}
+            </div>
+            <div>
+              <label for="{{ author_form.pin_code.id_for_label }}" class="label">Pin code</label>
+              {{ author_form.pin_code }}
+            </div>
+            <div>
+              <label for="{{ author_form.nationality.id_for_label }}" class="label">Nationality</label>
+              {{ author_form.nationality }}
+            </div>
+            <div class="col-span-2 md:col-span-3">
+              <label for="{{ author_form.full_address.id_for_label }}" class="label">Complete postal address</label>
+              {{ author_form.full_address }}
+            </div>
+            <div class="col-span-2 md:col-span-3">
+              <label for="{{ author_form.details.id_for_label }}" class="label">Extra notes / ORCID</label>
+              {{ author_form.details }}
+              {% for error in author_form.details.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+          </div>
+          {{ author_form.position }}
+          {% if author_form.non_field_errors %}{% for error in author_form.non_field_errors %}<p class="field-error">{{ error }}</p>{% endfor %}{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+
+      {# Cloneable blank row (indices use the __prefix__ placeholder) #}
+      <template id="author-row-template">
+        <div class="formset-row author-row rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+          <div class="mb-3 flex items-center justify-between">
+            <span class="author-number-badge inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+              {% include 'tracker/_icon.html' with name='user' cls='h-4 w-4 text-slate-400' %} <span class="author-number">1</span> <span class="author-position-label text-slate-400 font-medium"></span>
+            </span>
+            <button type="button" class="remove-author-btn inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400" aria-label="Remove this author">
+              {% include 'tracker/_icon.html' with name='trash-2' cls='h-4.5 w-4.5' %}
+            </button>
+          </div>
+          <div class="grid gap-3 md:grid-cols-2">
+            <div>
+              <label for="id_authors-__prefix__-name" class="label">Author full name <span class="text-rose-500">*</span></label>
+              <input type="text" name="authors-__prefix__-name" id="id_authors-__prefix__-name" class="input" placeholder="e.g. Dr. Meera Iyer">
+            </div>
+            <div>
+              <label for="id_authors-__prefix__-email" class="label">Email ID <span class="text-rose-500">*</span></label>
+              <input type="email" name="authors-__prefix__-email" id="id_authors-__prefix__-email" class="input" placeholder="author@university.edu">
+            </div>
+            <div>
+              <label for="id_authors-__prefix__-phone" class="label">Mobile number <span class="text-rose-500">*</span></label>
+              <input type="tel" name="authors-__prefix__-phone" id="id_authors-__prefix__-phone" class="input" placeholder="+91 98xxxxxx00">
+            </div>
+            <div>
+              <label for="id_authors-__prefix__-designation" class="label">Designation</label>
+              <input type="text" name="authors-__prefix__-designation" id="id_authors-__prefix__-designation" class="input" placeholder="e.g. Assistant Professor">
+            </div>
+            <div>
+              <label for="id_authors-__prefix__-department" class="label">Department</label>
+              <input type="text" name="authors-__prefix__-department" id="id_authors-__prefix__-department" class="input" placeholder="e.g. Computer Science">
+            </div>
+            <div>
+              <label for="id_authors-__prefix__-company_name" class="label">Company / Institution</label>
+              <input type="text" name="authors-__prefix__-company_name" id="id_authors-__prefix__-company_name" class="input" placeholder="e.g. Anna University">
+            </div>
+          </div>
+          <button type="button" class="author-extra-toggle mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 transition hover:text-emerald-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded" aria-expanded="false">
+            {% include 'tracker/_icon.html' with name='map-pin' cls='h-3.5 w-3.5' %} Address &amp; nationality <span class="author-extra-caret transition-transform">▾</span>
+          </button>
+          <div class="author-extra mt-3 hidden grid-cols-2 gap-3 border-t border-slate-200/80 pt-3 md:grid-cols-3">
+            <div>
+              <label for="id_authors-__prefix__-city" class="label">City</label>
+              <input type="text" name="authors-__prefix__-city" id="id_authors-__prefix__-city" class="input" placeholder="e.g. Chennai">
+            </div>
+            <div>
+              <label for="id_authors-__prefix__-district" class="label">District</label>
+              <input type="text" name="authors-__prefix__-district" id="id_authors-__prefix__-district" class="input" placeholder="e.g. Chennai">
+            </div>
+            <div>
+              <label for="id_authors-__prefix__-state" class="label">State</label>
+              <input type="text" name="authors-__prefix__-state" id="id_authors-__prefix__-state" class="input" placeholder="e.g. Tamil Nadu">
+            </div>
+            <div>
+              <label for="id_authors-__prefix__-country" class="label">Country</label>
+              <input type="text" name="authors-__prefix__-country" id="id_authors-__prefix__-country" class="input" placeholder="e.g. India">
+            </div>
+            <div>
+              <label for="id_authors-__prefix__-pin_code" class="label">Pin code</label>
+              <input type="text" name="authors-__prefix__-pin_code" id="id_authors-__prefix__-pin_code" class="input" placeholder="e.g. 600025">
+            </div>
+            <div>
+              <label for="id_authors-__prefix__-nationality" class="label">Nationality</label>
+              <input type="text" name="authors-__prefix__-nationality" id="id_authors-__prefix__-nationality" class="input" placeholder="e.g. Indian">
+            </div>
+            <div class="col-span-2 md:col-span-3">
+              <label for="id_authors-__prefix__-full_address" class="label">Complete postal address</label>
+              <textarea name="authors-__prefix__-full_address" id="id_authors-__prefix__-full_address" rows="1" class="input min-h-[40px] resize-none" placeholder="Complete postal address"></textarea>
+            </div>
+            <div class="col-span-2 md:col-span-3">
+              <label for="id_authors-__prefix__-details" class="label">Extra notes / ORCID</label>
+              <textarea name="authors-__prefix__-details" id="id_authors-__prefix__-details" rows="1" class="input min-h-[40px] resize-none" placeholder="Extra notes / ORCID"></textarea>
+            </div>
+          </div>
+          <input type="hidden" name="authors-__prefix__-position" value="1">
+        </div>
+      </template>
+
+      <div class="flex flex-wrap items-center gap-3">
+        <button type="button" id="add-author-btn" class="btn-secondary">
+          {% include 'tracker/_icon.html' with name='plus' cls='h-4.5 w-4.5' %} Book next author slot
+        </button>
+        <p id="author-hint" class="text-xs font-medium text-slate-500"></p>
+      </div>
+    </fieldset>
+
+    {# ---------- 3. Payment installments (dynamic) ---------- #}
+    <fieldset>
+      <legend class="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-500">
+        <span class="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-600 text-xs font-bold text-white">3</span> Payment installments (proofs)
+      </legend>
+      <p class="-mt-2 mb-4 text-xs font-medium text-slate-500">{% include 'tracker/_icon.html' with name='users' cls='h-3.5 w-3.5 inline align-[-2px] text-emerald-600' %} Authors pay individually — pick <span class="font-semibold text-slate-700">Paid by author</span> on every installment so Accounts knows whose bank transfer to match.</p>
+
+      <div id="installment-rows" class="mb-3 space-y-3">
+        {% for inst_form in installment_formset %}
+        <div class="formset-row installment-row rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+          <div class="mb-3 flex items-center justify-between">
+            <span class="text-sm font-semibold text-slate-700">{% include 'tracker/_icon.html' with name='receipt' cls='h-4 w-4 text-slate-400' %} Installment <span class="inst-number">1</span></span>
+            <button type="button" class="remove-installment-btn inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400" aria-label="Remove this installment">
+              {% include 'tracker/_icon.html' with name='trash-2' cls='h-4.5 w-4.5' %}
+            </button>
+          </div>
+          <div class="grid gap-3 md:grid-cols-3">
+            <div>
+              <label for="{{ inst_form.payment_type.id_for_label }}" class="label">Phase <span class="text-rose-500">*</span></label>
+              {{ inst_form.payment_type }}
+              {% for error in inst_form.payment_type.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ inst_form.amount_paid.id_for_label }}" class="label">Amount paid (₹) <span class="text-rose-500">*</span></label>
+              {{ inst_form.amount_paid }}
+              {% for error in inst_form.amount_paid.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ inst_form.author_position.id_for_label }}" class="label">Paid by author <span class="text-rose-500">*</span></label>
+              {{ inst_form.author_position }}
+              {% for error in inst_form.author_position.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ inst_form.transaction_ref.id_for_label }}" class="label">Transaction ref (UTR) <span class="text-rose-500">*</span></label>
+              {{ inst_form.transaction_ref }}
+              {% for error in inst_form.transaction_ref.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="{{ inst_form.payment_mode.id_for_label }}" class="label">Payment mode</label>
+              {{ inst_form.payment_mode }}
+            </div>
+            <div>
+              <label for="{{ inst_form.payment_date.id_for_label }}" class="label">Payment date</label>
+              {{ inst_form.payment_date }}
+            </div>
+            <div>
+              <label for="{{ inst_form.remarks.id_for_label }}" class="label">Remarks</label>
+              {{ inst_form.remarks }}
+            </div>
+          </div>
+
+          {# Proof photo / screenshot of this transaction (REQUIRED, viewed by Accounts) #}
+          <div class="mt-3 border-t border-slate-200/80 pt-3">
+            <label for="{{ inst_form.proof_image.id_for_label }}" class="label flex items-center gap-1.5">
+              {% include 'tracker/_icon.html' with name='image' cls='h-3.5 w-3.5 text-slate-400' %} Transaction photo / screenshot <span class="text-rose-500">*</span>
+            </label>
+            {{ inst_form.proof_image }}
+            <div class="flex flex-wrap items-center gap-2.5">
+              <button type="button" class="proof-upload-btn inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
+                {% include 'tracker/_icon.html' with name='upload' cls='h-4 w-4' %} Upload photo
+              </button>
+              <span class="proof-file-chip inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs text-slate-400">
+                <span class="proof-chip-empty-icon shrink-0">{% include 'tracker/_icon.html' with name='image' cls='h-3.5 w-3.5' %}</span>
+                <span class="proof-chip-done-icon hidden shrink-0 text-emerald-600">{% include 'tracker/_icon.html' with name='check-circle' cls='h-3.5 w-3.5' %}</span>
+                <span class="proof-file-name truncate">No file chosen — required</span>
+              </span>
+            </div>
+            <p class="mt-1 text-[11px] text-slate-400">Mandatory — Accounts clears this payment against your photo. JPG, PNG, WebP or PDF up to 10 MB.</p>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      {# Cloneable blank row (indices use the __prefix__ placeholder) #}
+      <template id="installment-row-template">
+        <div class="formset-row installment-row rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+          <div class="mb-3 flex items-center justify-between">
+            <span class="text-sm font-semibold text-slate-700">{% include 'tracker/_icon.html' with name='receipt' cls='h-4 w-4 text-slate-400' %} Installment <span class="inst-number">1</span></span>
+            <button type="button" class="remove-installment-btn inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400" aria-label="Remove this installment">
+              {% include 'tracker/_icon.html' with name='trash-2' cls='h-4.5 w-4.5' %}
+            </button>
+          </div>
+          <div class="grid gap-3 md:grid-cols-3">
+            <div>
+              <label for="id_installments-__prefix__-payment_type" class="label">Phase <span class="text-rose-500">*</span></label>
+              <select name="installments-__prefix__-payment_type" id="id_installments-__prefix__-payment_type" class="input">
+                <option value="ADVANCE_1" selected>Advance Amount</option>
+                <option value="ADVANCE_2">Installment 2</option>
+                <option value="REMAINING">Remaining / Full Settlement</option>
+              </select>
+            </div>
+            <div>
+              <label for="id_installments-__prefix__-amount_paid" class="label">Amount paid (₹) <span class="text-rose-500">*</span></label>
+              <input type="number" name="installments-__prefix__-amount_paid" id="id_installments-__prefix__-amount_paid" step="0.01" min="0" class="input inst-amount-input" placeholder="e.g. 30000">
+            </div>
+            <div>
+              <label for="id_installments-__prefix__-author_position" class="label">Paid by author <span class="text-rose-500">*</span></label>
+              {# Options are injected live from the author rows above (authors pay individually) #}
+              <select name="installments-__prefix__-author_position" id="id_installments-__prefix__-author_position" class="input paid-by-select">
+                <option value="">— select the paying author —</option>
+              </select>
+            </div>
+            <div>
+              <label for="id_installments-__prefix__-transaction_ref" class="label">Transaction ref (UTR) <span class="text-rose-500">*</span></label>
+              <input type="text" name="installments-__prefix__-transaction_ref" id="id_installments-__prefix__-transaction_ref" class="input" placeholder="e.g. UTR 883729105">
+            </div>
+            <div>
+              <label for="id_installments-__prefix__-payment_mode" class="label">Payment mode</label>
+              <select name="installments-__prefix__-payment_mode" id="id_installments-__prefix__-payment_mode" class="input">
+                <option value="UPI" selected>UPI</option>
+                <option value="BANK_TRANSFER">Bank Transfer</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </div>
+            <div>
+              <label for="id_installments-__prefix__-payment_date" class="label">Payment date</label>
+              <input type="date" name="installments-__prefix__-payment_date" id="id_installments-__prefix__-payment_date" class="input">
+            </div>
+            <div>
+              <label for="id_installments-__prefix__-remarks" class="label">Remarks</label>
+              <input type="text" name="installments-__prefix__-remarks" id="id_installments-__prefix__-remarks" class="input" placeholder="e.g. part payment via GPay">
+            </div>
+          </div>
+
+          <div class="mt-3 border-t border-slate-200/80 pt-3">
+            <label for="id_installments-__prefix__-proof_image" class="label flex items-center gap-1.5">
+              {% include 'tracker/_icon.html' with name='image' cls='h-3.5 w-3.5 text-slate-400' %} Transaction photo / screenshot <span class="text-rose-500">*</span>
+            </label>
+            <input type="file" name="installments-__prefix__-proof_image" id="id_installments-__prefix__-proof_image" accept="image/jpeg,image/png,image/webp,.pdf" class="hidden proof-file-input">
+            <div class="flex flex-wrap items-center gap-2.5">
+              <button type="button" class="proof-upload-btn inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
+                {% include 'tracker/_icon.html' with name='upload' cls='h-4 w-4' %} Upload photo
+              </button>
+              <span class="proof-file-chip inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs text-slate-400">
+                <span class="proof-chip-empty-icon shrink-0">{% include 'tracker/_icon.html' with name='image' cls='h-3.5 w-3.5' %}</span>
+                <span class="proof-chip-done-icon hidden shrink-0 text-emerald-600">{% include 'tracker/_icon.html' with name='check-circle' cls='h-3.5 w-3.5' %}</span>
+                <span class="proof-file-name truncate">No file chosen — required</span>
+              </span>
+            </div>
+            <p class="mt-1 text-[11px] text-slate-400">Mandatory — Accounts clears this payment against your photo. JPG, PNG, WebP or PDF up to 10 MB.</p>
+          </div>
+        </div>
+      </template>
+
+      <div class="flex flex-wrap items-center gap-3">
+        <button type="button" id="add-installment-btn" class="btn-secondary">
+          {% include 'tracker/_icon.html' with name='plus' cls='h-4.5 w-4.5' %} Add installment
+        </button>
+        <button type="button" id="auto-balance-btn" class="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500" title="Fill the Remaining installment with the balance so payments equal the payable amount">
+          {% include 'tracker/_icon.html' with name='banknote' cls='h-4 w-4' %} Fill balance
+        </button>
+        <p id="installment-total-hint" class="text-xs font-medium text-slate-500">₹0 scheduled</p>
+      </div>
+
+      {% comment %}"Schedule the remaining later": shown whenever the installments total
+         LESS than the payable amount -- the explicit opt-out from the
+         payments == sale value rule (the BDE fills the balance in from the
+         project page anytime).{% endcomment %}
+      {# NOTE: the label needs BOTH `hidden` and `flex` -- JS toggles the two together; without `flex` it falls back to display:inline and the card collapses. #}
+      <label id="defer-remaining-wrap" for="defer-remaining-toggle" class="mt-3 hidden flex cursor-pointer items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 transition hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400">
+        <input type="checkbox" id="defer-remaining-toggle" name="defer_remaining" value="1" class="mt-0.5 h-4 w-4 shrink-0 rounded accent-amber-600 focus:ring-amber-400">
+        <span>
+          <span class="font-semibold">Schedule the remaining <span id="defer-remaining-amount">₹0</span> later</span>
+          <span class="mt-0.5 block text-xs leading-relaxed text-amber-700">Not every payment is known today — save the project now and add the remaining installments from the project page anytime. Accounts verifies each payment as you add it.</span>
+        </span>
+      </label>
+    </fieldset>
+
+    {# ---------- Submit ---------- #}
+    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-5">
+      <p class="text-xs text-slate-500">
+        {% include 'tracker/_icon.html' with name='shield' cls='h-3.5 w-3.5 inline align-[-2px] text-emerald-600' %}
+        Payments should add up to the payable amount (sale − discount) — or tick “Schedule the remaining later” to add the rest from the project page anytime. Accounts clears each proof against your photo — you cannot self-verify.
+      </p>
+      <button type="submit" class="btn-primary">
+        {% include 'tracker/_icon.html' with name='check-circle' cls='h-4.5 w-4.5' %} Create project &amp; submit proofs
+      </button>
+    </div>
+
+    {# Django formset management forms (TOTAL/INITIAL/... counts) #}
+    {{ author_formset.management_form }}
+    {{ installment_formset.management_form }}
+  </form>
+</section>
+{% endif %}{# /not view_as #}
+
+{# ================= My projects table ================= #}
+<section id="my-projects" class="card scroll-mt-24 overflow-hidden">
+  <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-5">
+    <div>
+      <h2 class="text-lg font-bold tracking-tight text-slate-900">{% if view_as %}Their projects{% else %}My projects{% endif %}</h2>
+      <p class="mt-0.5 text-sm text-slate-500">Open a project to update author details, payments and to track the publication lifecycle.</p>
+    </div>
+    <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">{{ stats.project_count }} total</span>
+  </div>
+
+  <div class="max-h-[520px] overflow-auto scroll-thin">
+    <table class="min-w-full divide-y divide-slate-200">
+      <thead class="sticky top-0 z-10 bg-slate-50">
+        <tr>
+          <th class="th">Project</th>
+          <th class="th">Slots</th>
+          <th class="th">Value (₹)</th>
+          <th class="th">Payments</th>
+          <th class="th">Lifecycle</th>
+          <th class="th">Created</th>
+          <th class="th"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100 bg-white">
+        {% for project in projects %}
+        <tr class="transition hover:bg-emerald-50/40">
+          <td class="td min-w-[160px] max-w-[280px]">
+            <a href="{% url 'tracker:project_detail' project.pk %}{{ qp }}" class="block truncate font-semibold text-slate-800 hover:text-emerald-700 hover:underline" title="{{ project.title }}">{{ project.title }}</a>
+            <p class="mt-0.5 truncate text-xs text-slate-500" title="{{ project.service_type.name }}">{{ project.service_type.name }}</p>
+          </td>
+          <td class="td">
+            <span class="inline-flex items-center gap-1.5" title="{{ project.authors_count }} of {{ project.total_slots }} provisioned author slots booked">{% include 'tracker/_icon.html' with name='users' cls='h-3.5 w-3.5 text-slate-400' %} {{ project.authors_count }}/{{ project.total_slots }}</span>
+          </td>
+          <td class="td">
+            <p class="font-semibold text-slate-800">₹{{ project.net_value|floatformat:0|intcomma }}</p>
+            {% if project.discount_value %}<p class="text-xs text-slate-500">disc. ₹{{ project.discount_value|floatformat:0|intcomma }}</p>{% endif %}
+          </td>
+          <td class="td">
+            <p class="text-xs"><span class="font-semibold text-emerald-700">₹{{ project.total_collected|floatformat:0|intcomma }}</span> verified</p>
+            <p class="text-xs"><span class="font-semibold text-amber-700">₹{{ project.total_pending|floatformat:0|intcomma }}</span> on review</p>
+            {% if project.total_rejected > 0 %}
+            <p class="text-xs"><span class="font-semibold text-rose-600">₹{{ project.total_rejected|floatformat:0|intcomma }}</span> rejected</p>
+            {% endif %}
+            {% if project.remaining_to_schedule > 0 %}
+            <p class="text-xs"><span class="font-semibold text-rose-600">₹{{ project.remaining_to_schedule|floatformat:0|intcomma }}</span> to schedule</p>
+            {% endif %}
+          </td>
+          <td class="td">{% include 'tracker/_status_badge.html' with status=project.publication_status %}</td>
+          <td class="td text-xs text-slate-500">{{ project.created_at|date:"d M Y" }}</td>
+          <td class="td">
+            <a href="{% url 'tracker:project_detail' project.pk %}{{ qp }}" class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500" aria-label="View {{ project.title }} details">
+              {% include 'tracker/_icon.html' with name='eye' cls='h-4.5 w-4.5' %}
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7" class="px-6 py-14 text-center">
+            {% include 'tracker/_icon.html' with name='file-text' cls='mx-auto h-8 w-8 text-slate-300' %}
+            <p class="mt-2 text-sm font-medium text-slate-500">{% if view_as %}No projects yet for this executive.{% else %}No projects yet — create your first deal above.{% endif %}</p>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
+
+{% block page_scripts %}
+{% if not view_as %}
+{# ================================================================== #}
+{#  Dynamic formset behaviour (vanilla JS, no dependencies):           #}
+{#   - slot provisioning: the service catalogue drives the author cap #}
+{#   - re-indexes Django formset field names after removal            #}
+{#   - quick-paste parser fills author rows from raw pasted text      #}
+{#   - add/remove installment rows + live total vs payable amount     #}
+{#   - button-style proof upload (hidden file input + visible button) #}
+{# ================================================================== #}
+<script>
+(function () {
+  'use strict';
+
+  function fmt(n) { return Math.round(n).toLocaleString('en-IN'); }
+
+  /* ---------- service catalogue (slot caps + base prices) ---------- */
+  var serviceInfo = {};
+  try { serviceInfo = JSON.parse(document.getElementById('service-info-data').textContent); }
+  catch (e) { serviceInfo = {}; }
+
+  /* ---------- shared formset helpers ---------- */
+  function makeFormset(prefix, rowsWrap, templateEl, totalInput) {
+    function reindex() {
+      let i = 0;
+      rowsWrap.querySelectorAll('.formset-row').forEach(function (row) {
+        row.querySelectorAll('input, select, textarea, label').forEach(function (el) {
+          var rx = new RegExp('^' + prefix + '-\\d+-');
+          if (el.name)      el.name  = el.name.replace(rx, prefix + '-' + i + '-');
+          if (el.id)        el.id    = el.id.replace(rx, prefix + '-' + i + '-');
+          if (el.htmlFor)   el.htmlFor = el.htmlFor.replace(rx, prefix + '-' + i + '-');
+        });
+        row.dataset.index = String(i);
+        i += 1;
+      });
+      totalInput.value = String(i);
+      return i;
+    }
+
+    function addRow() {
+      var clone = templateEl.content.firstElementChild.cloneNode(true);
+      clone.innerHTML = clone.innerHTML.replaceAll('__prefix__', totalInput.value);
+      rowsWrap.appendChild(clone);
+      reindex();
+      var first = clone.querySelector('input:not([type=hidden])');
+      if (first) first.focus();
+    }
+
+    function removeRow(row) {
+      row.remove();
+      reindex();
+    }
+
+    return {
+      reindex: reindex,
+      addRow: addRow,
+      removeRow: removeRow,
+      count: function () { return rowsWrap.querySelectorAll('.formset-row').length; },
+    };
+  }
+
+  function managementTotal(prefix) {
+    return document.getElementById('id_' + prefix + '-TOTAL_FORMS');
+  }
+
+  function positionLabel(n) {
+    if ((n % 100) >= 11 && (n % 100) <= 13) return n + 'th Position';
+    return n + ({1: 'st', 2: 'nd', 3: 'rd'}[n % 10] || 'th') + ' Position';
+  }
+
+  /* ================================================================
+   *  AUTHORS -- slot booking capped by the provisioned slots of the
+   *  selected publication category (FTSD 4.1).
+   * ================================================================ */
+  var authorRows = document.getElementById('author-rows');
+  var authorTemplate = document.getElementById('author-row-template');
+  var addAuthorBtn = document.getElementById('add-author-btn');
+  var authorHint = document.getElementById('author-hint');
+  var serviceSelect = document.getElementById('id_service_type');
+  var slotsInfo = document.getElementById('slots-info');
+
+  var authors = makeFormset('authors', authorRows, authorTemplate, managementTotal('authors'));
+
+  function currentCap() {
+    var key = serviceSelect && serviceSelect.value;
+    var info = key && serviceInfo[key];
+    return info ? parseInt(info.slots, 10) || 1 : 0;
+  }
+
+  function refreshSlotsInfo() {
+    if (!slotsInfo || !serviceSelect) return;
+    var info = serviceInfo[serviceSelect.value];
+    if (!info) { slotsInfo.textContent = ''; return; }
+    var base = parseFloat(info.base) || 0;
+    slotsInfo.textContent = '"' + info.name + '" provisions ' + info.slots +
+      ' author slot' + (info.slots === 1 ? '' : 's') + ' per title' +
+      (base > 0 ? ' · base price ₹' + fmt(base) : '') +
+      ' — the app books them in section 2.';
+  }
+
+  function refreshAuthorUI() {
+    var count = authors.count();
+    var cap = currentCap();
+    var atCap = cap > 0 && count >= cap;
+    addAuthorBtn.disabled = atCap;
+    if (cap > 0) {
+      authorHint.textContent = count + ' of ' + cap + ' provisioned slot' +
+        (cap === 1 ? '' : 's') + ' booked' +
+        (atCap ? ' — all slots are locked once you submit.' : ' — book the next one below.');
+      authorHint.className = atCap
+        ? 'text-xs font-semibold text-emerald-700'
+        : 'text-xs font-medium text-slate-500';
+    } else {
+      authorHint.textContent = count + ' author row' + (count === 1 ? '' : 's') +
+        ' — pick a publication category to provision the slots.';
+      authorHint.className = 'text-xs font-medium text-slate-500';
+    }
+  }
+
+  function renumberAuthorRows() {
+    authorRows.querySelectorAll('.formset-row').forEach(function (row, idx) {
+      var num = row.querySelector('.author-number');
+      if (num) num.textContent = String(idx + 1);
+      var posLabel = row.querySelector('.author-position-label');
+      if (posLabel) posLabel.textContent = '· ' + positionLabel(idx + 1);
+      var pos = row.querySelector('input[name$="-position"]');
+      if (pos) pos.value = String(idx + 1);   // display only; server re-assigns
+    });
+    instRenumber();
+    refreshPaidByOptions();
+  }
+
+  /* Grow/shrink the author rows to exactly `n` (capped at the provisioned slots). */
+  function setAuthorCount(n) {
+    n = parseInt(n, 10);
+    if (isNaN(n) || n < 1) n = 1;
+    var cap = currentCap();
+    if (cap > 0 && n > cap) {
+      n = cap;
+      window.showToast('This publication category provisions only ' + cap +
+        ' author slot' + (cap === 1 ? '' : 's') + ' — cannot book more.', 'warn');
+    }
+    if (n > authors.count()) {
+      while (authors.count() < n) authors.addRow();
+      renumberAuthorRows();
+    } else if (n < authors.count()) {
+      while (authors.count() > n) {
+        authorRows.querySelector('.formset-row:last-child').remove();
+        authors.reindex();
+      }
+      renumberAuthorRows();
+    }
+    refreshAuthorUI();
+  }
+
+  addAuthorBtn.addEventListener('click', function () {
+    setAuthorCount(authors.count() + 1);
+  });
+
+  if (serviceSelect) serviceSelect.addEventListener('change', function () {
+    refreshSlotsInfo();
+    /* Trim any rows above the newly provisioned cap (keep at least 1). */
+    var cap = currentCap();
+    if (cap > 0 && authors.count() > cap) setAuthorCount(cap);
+    refreshAuthorUI();
+  });
+
+  authorRows.addEventListener('click', function (e) {
+    /* Expand / collapse the address section of one author row. */
+    var toggle = e.target.closest('.author-extra-toggle');
+    if (toggle) {
+      var row = toggle.closest('.formset-row');
+      var extra = row && row.querySelector('.author-extra');
+      var caret = toggle.querySelector('.author-extra-caret');
+      if (extra) {
+        var open = !extra.classList.contains('hidden');
+        extra.classList.toggle('hidden', open);
+        extra.classList.toggle('grid', !open);
+        if (caret) caret.style.transform = open ? '' : 'rotate(180deg)';
+        toggle.setAttribute('aria-expanded', String(!open));
+      }
+      return;
+    }
+    var btn = e.target.closest('.remove-author-btn');
+    if (!btn) return;
+    if (authors.count() <= 1) {
+      window.showToast('At least one author is required.', 'warn');
+      return;
+    }
+    authors.removeRow(btn.closest('.formset-row'));
+    renumberAuthorRows();
+    refreshAuthorUI();
+  });
+
+  /* ================================================================
+   *  QUICK PASTE PARSER (FTSD transcript 3) -- fills the next empty
+   *  author rows from raw pasted client details.
+   * ================================================================ */
+  var pasteBtn = document.getElementById('quick-paste-btn');
+  var pasteInput = document.getElementById('quick-paste-input');
+
+  var FIELD_KEYS = {
+    'name': ['name', 'author', 'full name', 'author name'],
+    'email': ['email', 'email id', 'mail', 'e-mail'],
+    'phone': ['phone', 'mobile', 'phone number', 'mobile number', 'contact', 'whatsapp'],
+    'designation': ['designation', 'designation', 'title'],
+    'department': ['department', 'dept'],
+    'company_name': ['company', 'company name', 'institution', 'company / institution', 'organization', 'organisation'],
+    'full_address': ['address', 'full address', 'postal address', 'complete postal address'],
+    'city': ['city'],
+    'district': ['district'],
+    'state': ['state'],
+    'country': ['country'],
+    'pin_code': ['pin', 'pin code', 'pincode', 'zip', 'zipcode', 'postal code'],
+    'nationality': ['nationality'],
+  };
+
+  function fieldForLabel(label) {
+    var l = label.toLowerCase().replace(/[:：]$/, '').trim();
+    for (var f in FIELD_KEYS) {
+      if (FIELD_KEYS[f].indexOf(l) !== -1) return f;
+    }
+    return null;
+  }
+
+  function parseBlock(text) {
+    var data = {};
+    var kvSeen = false;
+    text.split(/[\n|]+/).forEach(function (line) {
+      line = line.trim();
+      if (!line) return;
+      var m = line.match(/^([^:：]{1,28})[:：]\s*(.+)$/);
+      if (m) {
+        var field = fieldForLabel(m[1]);
+        if (field) { data[field] = m[2].trim(); kvSeen = true; return; }
+      }
+      if (!kvSeen && line.indexOf(',') !== -1) {
+        /* comma-separated fallback: name, email, phone (, designation) */
+        var parts = line.split(',').map(function (p) { return p.trim(); }).filter(Boolean);
+        if (parts.length >= 2 && !data.name) {
+          data.name = parts[0];
+          if (parts[1] && parts[1].indexOf('@') !== -1) {
+            data.email = parts[1];
+            if (parts[2] && /^\+?[\d\s-]{8,}$/.test(parts[2])) data.phone = parts[2];
+            if (parts[3]) data.designation = parts[3];
+          } else if (parts[1] && /^\+?[\d\s-]{8,}$/.test(parts[1])) {
+            data.phone = parts[1];
+            if (parts[2] && parts[2].indexOf('@') !== -1) data.email = parts[2];
+          }
+        }
+      }
+    });
+    /* Bare email / phone lines even without labels. */
+    if (!data.email) {
+      var em = text.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+      if (em) data.email = em[0];
+    }
+    if (!data.phone) {
+      var ph = text.match(/\+\d{1,3}[\s-]?\d{6,12}|\b\d{10}\b/);
+      if (ph) data.phone = ph[0];
+    }
+    if (!data.pin_code) {
+      var pin = text.match(/\b\d{6}\b/);
+      if (pin) data.pin_code = pin[0];
+    }
+    return data;
+  }
+
+  function firstEmptyAuthorRow() {
+    var rows = authorRows.querySelectorAll('.formset-row');
+    for (var i = 0; i < rows.length; i++) {
+      var nameInput = rows[i].querySelector('input[name$="-name"]');
+      if (nameInput && !nameInput.value.trim()) return rows[i];
+    }
+    return null;
+  }
+
+  function applyParsedAuthor(row, data) {
+    Object.keys(data).forEach(function (field) {
+      var input = row.querySelector('[name$="-' + field + '"]');
+      if (input && !input.value) input.value = data[field];
+    });
+  }
+
+  if (pasteBtn) pasteBtn.addEventListener('click', function () {
+    var raw = pasteInput && pasteInput.value ? pasteInput.value.trim() : '';
+    if (!raw) { window.showToast('Paste the client details into the box first.', 'warn'); return; }
+
+    /* Split into author blocks: blank lines (or 2+ newlines) separate them. */
+    var blocks = raw.split(/\n\s*\n+/).map(function (b) { return b.trim(); }).filter(Boolean);
+    var filled = 0, skipped = 0;
+
+    blocks.forEach(function (block) {
+      var data = parseBlock(block);
+      if (!data.name) { skipped++; return; }
+      var row = firstEmptyAuthorRow();
+      if (!row) {
+        var cap = currentCap();
+        if (cap > 0 && authors.count() >= cap) { skipped++; return; }
+        authors.addRow();
+        renumberAuthorRows();
+        row = authorRows.querySelector('.formset-row:last-child');
+      }
+      applyParsedAuthor(row, data);
+      filled++;
+    });
+
+    if (filled) {
+      window.showToast('Parsed ' + filled + ' author' + (filled === 1 ? '' : 's') +
+        (skipped ? ' (' + skipped + ' block' + (skipped === 1 ? '' : 's') +
+        ' skipped — no name found or all slots booked)' : '') +
+        ' — review the rows below and complete anything missing.', 'success');
+      pasteInput.value = '';
+    } else {
+      window.showToast('Could not find any author name in the pasted text — use "Name: …" lines or comma-separated (name, email, phone).', 'warn');
+    }
+  });
+
+  /* ================================================================
+   *  INSTALLMENTS — dynamic rows; the total EQUALS the payable amount
+   *  (sale value − discount) or stays below it when the BDE ticks
+   *  "Schedule the remaining later" (the balance is filled in from the
+   *  project page).  Enforced live + on submit, with a one-click
+   *  "Fill balance" helper for the Remaining installment.
+   * ================================================================ */
+  var instRows = document.getElementById('installment-rows');
+  var instTemplate = document.getElementById('installment-row-template');
+  var addInstBtn = document.getElementById('add-installment-btn');
+  var autoBalanceBtn = document.getElementById('auto-balance-btn');
+  var instHint = document.getElementById('installment-total-hint');
+  var saleInput = document.getElementById('id_sale_value');
+  var discountInput = document.getElementById('id_discount_value');
+  var createForm = document.getElementById('create-project-form');
+  var deferWrap = document.getElementById('defer-remaining-wrap');
+  var deferToggle = document.getElementById('defer-remaining-toggle');
+  var deferAmount = document.getElementById('defer-remaining-amount');
+
+  var installments = makeFormset('installments', instRows, instTemplate, managementTotal('installments'));
+
+  function instRenumber() {
+    if (!instRows) return;
+    instRows.querySelectorAll('.formset-row').forEach(function (row, idx) {
+      var num = row.querySelector('.inst-number');
+      if (num) num.textContent = String(idx + 1);
+    });
+  }
+
+  /* ================================================================
+   *  PAID BY AUTHOR -- authors pay individually, so every installment
+   *  row carries a payer select whose options mirror the author rows
+   *  being booked in section 2 (position 1..N + the typed names).
+   * ================================================================ */
+  function refreshPaidByOptions() {
+    if (!authorRows || !instRows) return;
+    var names = [];
+    authorRows.querySelectorAll('.formset-row').forEach(function (row) {
+      var inp = row.querySelector('input[name$="-name"]');
+      var typed = inp && inp.value.trim() ? inp.value.trim() : '';
+      names.push(typed || ('Author ' + (names.length + 1)));
+    });
+    instRows.querySelectorAll('.formset-row').forEach(function (row) {
+      var sel = row.querySelector('.paid-by-select');
+      if (!sel) return;
+      var current = sel.value;
+      sel.innerHTML = '';
+      var ph = document.createElement('option');
+      ph.value = '';
+      ph.textContent = '— select the paying author —';
+      sel.appendChild(ph);
+      names.forEach(function (nm, i) {
+        var o = document.createElement('option');
+        o.value = String(i + 1);
+        o.textContent = positionLabel(i + 1) + ' — ' + nm;
+        sel.appendChild(o);
+      });
+      /* Keep the previous pick when it is still a booked slot; with a
+         single booked author default to them (the usual textbook case). */
+      if (current && parseInt(current, 10) <= names.length) {
+        sel.value = current;
+      } else if (names.length === 1) {
+        sel.value = '1';
+      }
+    });
+  }
+
+  /* Typing an author name relabels the payer options live. */
+  authorRows.addEventListener('input', function (e) {
+    if (e.target && e.target.name && e.target.name.indexOf('-name') !== -1) {
+      refreshPaidByOptions();
+    }
+  });
+
+  addInstBtn.addEventListener('click', function () {
+    installments.addRow();
+    instRenumber();
+    refreshPaidByOptions();
+    recalcTotal();
+  });
+
+  instRows.addEventListener('click', function (e) {
+    /* Button-style upload: open the hidden file picker for this row. */
+    var uploadBtn = e.target.closest('.proof-upload-btn');
+    if (uploadBtn) {
+      var row = uploadBtn.closest('.formset-row');
+      var fileInput = row && row.querySelector('.proof-file-input');
+      if (fileInput) fileInput.click();
+      return;
+    }
+    var btn = e.target.closest('.remove-installment-btn');
+    if (!btn) return;
+    installments.removeRow(btn.closest('.formset-row'));
+    instRenumber();
+    if (installments.count() === 0) {
+      /* An empty schedule is fine now — the BDE simply ticks
+         "Schedule the remaining later" and saves the project. */
+      window.showToast('No installments left — tick "Schedule the remaining later" to save the project without payments today.', 'info');
+    }
+    recalcTotal();
+  });
+
+  instRows.addEventListener('input', recalcTotal);
+  [saleInput, discountInput].forEach(function (el) {
+    if (el) el.addEventListener('input', recalcTotal);
+  });
+
+  /* Reflect a picked proof file on the chip next to the Upload button. */
+  function updateProofChip(input) {
+    var row = input.closest('.formset-row');
+    if (!row) return;
+    var chip = row.querySelector('.proof-file-chip');
+    var nameEl = row.querySelector('.proof-file-name');
+    var emptyIcon = row.querySelector('.proof-chip-empty-icon');
+    var doneIcon = row.querySelector('.proof-chip-done-icon');
+    var uploadBtn = row.querySelector('.proof-upload-btn');
+    var hasFile = input.files && input.files.length > 0;
+    if (nameEl) {
+      nameEl.textContent = hasFile ? input.files[0].name : 'No file chosen — required';
+      nameEl.title = hasFile ? input.files[0].name : '';
+    }
+    if (chip) {
+      chip.className = hasFile
+        ? 'proof-file-chip inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs font-medium text-emerald-700'
+        : 'proof-file-chip inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs text-slate-400';
+    }
+    if (emptyIcon && doneIcon) {
+      emptyIcon.classList.toggle('hidden', hasFile);
+      doneIcon.classList.toggle('hidden', !hasFile);
+    }
+    /* Clear any "missing proof" highlight from a blocked submit. */
+    if (hasFile && uploadBtn) uploadBtn.classList.remove('ring-2', 'ring-rose-400');
+    if (hasFile && chip) chip.classList.remove('ring-2', 'ring-rose-300', 'text-rose-600');
+  }
+
+  instRows.addEventListener('change', function (e) {
+    if (e.target.classList && e.target.classList.contains('proof-file-input')) {
+      updateProofChip(e.target);
+    }
+  });
+
+  function currentNet() {
+    var sale = parseFloat(saleInput && saleInput.value) || 0;
+    var disc = parseFloat(discountInput && discountInput.value) || 0;
+    return sale - disc;
+  }
+
+  function recalcTotal() {
+    var total = 0;
+    instRows.querySelectorAll('.inst-amount-input').forEach(function (inp) {
+      var v = parseFloat(inp.value);
+      if (!isNaN(v)) total += v;
+    });
+    var net = currentNet();
+
+    var text, cls;
+    var underBy = Math.round((net - total) * 100) / 100;
+    if (net <= 0) {
+      text = '₹' + fmt(total) + ' scheduled — enter the sale value first';
+      cls = 'text-xs font-medium text-slate-500';
+    } else if (Math.abs(total - net) < 0.005) {
+      text = '₹' + fmt(total) + ' of ₹' + fmt(net) + ' payable — matches ✓';
+      cls = 'text-xs font-semibold text-emerald-600';
+    } else if (total < net) {
+      text = '₹' + fmt(total) + ' of ₹' + fmt(net) + ' payable — ₹' + fmt(underBy) + ' still to schedule (save now and add it later below)';
+      cls = 'text-xs font-medium text-amber-600';
+    } else {
+      text = '₹' + fmt(total) + ' of ₹' + fmt(net) + ' payable — ₹' + fmt(total - net) + ' over!';
+      cls = 'text-xs font-semibold text-rose-600';
+    }
+    instHint.textContent = text;
+    instHint.className = cls;
+
+    /* Show the "Schedule the remaining later" option exactly when part
+       of the payable amount is still unscheduled; hide (and reset) it
+       otherwise so every deferral is a fresh, visible choice.  Toggle
+       `hidden` and `flex` TOGETHER (same pattern as the modals) so the
+       label is always display:flex while visible and display:none while
+       hidden -- never the broken display:inline fallback. */
+    if (deferWrap && deferToggle && deferAmount) {
+      var show = net > 0 && underBy >= 0.005;
+      deferWrap.classList.toggle('hidden', !show);
+      deferWrap.classList.toggle('flex', show);
+      if (show) {
+        deferAmount.textContent = '₹' + fmt(underBy);
+      } else if (deferToggle.checked) {
+        deferToggle.checked = false;
+      }
+    }
+    return total;
+  }
+
+  /* "Fill balance": add the outstanding difference to the Remaining
+     installment (retargeting the last row if needed) so the payments
+     total exactly equals the payable amount. */
+  if (autoBalanceBtn) autoBalanceBtn.addEventListener('click', function () {
+    var net = currentNet();
+    if (net <= 0) {
+      window.showToast('Enter the sale value first.', 'warn');
+      return;
+    }
+    var total = recalcTotal();
+    var diff = Math.round((net - total) * 100) / 100;
+    if (Math.abs(diff) < 0.005) {
+      window.showToast('Payments already match the payable amount.', 'info');
+      return;
+    }
+    if (diff < 0) {
+      window.showToast('Payments exceed the payable amount by ₹' + fmt(total - net) + ' — lower an installment first.', 'warn');
+      return;
+    }
+    var target = null;
+    instRows.querySelectorAll('.formset-row').forEach(function (row) {
+      var sel = row.querySelector('select[name$="-payment_type"]');
+      if (sel && sel.value === 'REMAINING') target = row;
+    });
+    if (!target) {
+      /* No Remaining row yet: add a fresh one for the balance. */
+      installments.addRow();
+      instRenumber();
+      var rows = instRows.querySelectorAll('.formset-row');
+      target = rows[rows.length - 1];
+      var sel = target.querySelector('select[name$="-payment_type"]');
+      if (sel) sel.value = 'REMAINING';
+    }
+    var amountInput = target.querySelector('.inst-amount-input');
+    if (!amountInput) return;
+    var current = parseFloat(amountInput.value) || 0;
+    amountInput.value = (current + diff).toFixed(2);
+    amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+    window.showToast('Added ₹' + fmt(diff) + ' to the Remaining installment — payments now match ₹' + fmt(net) + '.', 'success');
+    /* Nudge the BDE to complete the new row (transaction ref + proof). */
+    var txnInput = target.querySelector('input[type=text]');
+    if (txnInput) txnInput.focus();
+  });
+
+  /* ---------- pre-submit guards (the server re-validates everything).
+     Blocking here matters: a server round-trip would clear every picked
+     file input (browsers never repopulate them), forcing re-uploads. */
+  if (createForm) createForm.addEventListener('submit', function (e) {
+    var problems = [];
+
+    /* 1) every installment row that carries an amount needs its proof. */
+    var missing = [];
+    instRows.querySelectorAll('.formset-row').forEach(function (row) {
+      var amount = row.querySelector('.inst-amount-input');
+      var file = row.querySelector('.proof-file-input');
+      var hasAmount = amount && amount.value !== '';
+      var hasFile = file && file.files && file.files.length > 0;
+      if (hasAmount && !hasFile) {
+        missing.push(row);
+        var uploadBtn = row.querySelector('.proof-upload-btn');
+        var chip = row.querySelector('.proof-file-chip');
+        if (uploadBtn) uploadBtn.classList.add('ring-2', 'ring-rose-400');
+        if (chip) chip.classList.add('ring-2', 'ring-rose-300', 'text-rose-600');
+      }
+    });
+    if (missing.length) {
+      e.preventDefault();
+      problems.push(missing.length + ' installment row(s) are missing the transaction photo (marked in red)');
+      missing[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    /* 1b) authors pay individually -> every row with an amount names its payer. */
+    var noPayer = [];
+    instRows.querySelectorAll('.formset-row').forEach(function (row) {
+      var amount = row.querySelector('.inst-amount-input');
+      var sel = row.querySelector('.paid-by-select');
+      var hasAmount = amount && amount.value !== '';
+      if (hasAmount && sel && !sel.value) {
+        noPayer.push(row);
+        sel.classList.add('ring-2', 'ring-rose-400');
+      } else if (sel) {
+        sel.classList.remove('ring-2', 'ring-rose-400');
+      }
+    });
+    if (noPayer.length) {
+      e.preventDefault();
+      problems.push(noPayer.length + ' installment row(s) do not name the paying author (authors pay individually — marked in red)');
+      if (!missing.length) noPayer[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    /* 2) slot cap: the app provisions the slots; booking more is blocked. */
+    var cap = currentCap();
+    if (cap > 0 && authors.count() > cap) {
+      e.preventDefault();
+      problems.push('this publication category provisions ' + cap + ' author slot' +
+        (cap === 1 ? '' : 's') + ' — remove ' + (authors.count() - cap) + ' author row(s)');
+    }
+
+    /* 3) payments: EQUAL the payable amount, or stay BELOW it when the BDE
+       ticked the explicit "Schedule the remaining later" option. Going
+       OVER is always blocked (the server re-validates all of this). */
+    var net = currentNet();
+    var total = recalcTotal();
+    var deferred = deferToggle && deferToggle.checked;
+    if (net > 0 && total > net + 0.004) {
+      e.preventDefault();
+      problems.push('payments exceed the payable amount ₹' + fmt(net) + ' by ₹' + fmt(total - net));
+    } else if (net > 0 && total < net - 0.004 && !deferred) {
+      e.preventDefault();
+      problems.push('payments must add up to ₹' + fmt(net) + ' — tick "Schedule the remaining later" below the installments to save now and add the rest from the project page');
+    }
+
+    if (problems.length) {
+      window.showToast('Cannot submit yet — ' + problems.join('; ') + '.', 'error');
+    }
+  });
+
+  /* ---------- initial paint ---------- */
+  authors.reindex();
+  renumberAuthorRows();
+  refreshSlotsInfo();
+  refreshAuthorUI();
+  instRenumber();
+  recalcTotal();
+})();
+</script>
+{% endif %}{# /not view_as -- creation-form JS is unnecessary in admin view-as mode #}
+{% endblock %}

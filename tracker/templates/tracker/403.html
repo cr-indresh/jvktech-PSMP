@@ -1,0 +1,62 @@
+{% extends 'tracker/base.html' %}
+{# ================================================================== #}
+{#  403.html -- LUXURY REDESIGN: access denied card with editorial    #}
+{#  typography. All Django context vars preserved.                    #}
+{# ================================================================== #}
+{% block title %}Access denied{% endblock %}
+
+{% block content %}
+<div class="flex min-h-[60vh] items-center justify-center">
+  <div class="card max-w-lg overflow-hidden">
+    <div class="flex items-center gap-3 border-b border-slate-200 bg-rose-50 px-6 py-5">
+      <span class="flex h-11 w-11 shrink-0 items-center justify-center bg-rose-600 text-white">
+        {% include 'tracker/_icon.html' with name='shield' cls='h-5.5 w-5.5' %}
+      </span>
+      <div>
+        <h1 class="error-title font-serif text-xl font-semibold tracking-tight text-rose-900">{{ title|default:'403 — Forbidden' }}</h1>
+        <p class="text-sm text-rose-700/80">HTTP 403 · request blocked by security policy</p>
+      </div>
+    </div>
+
+    <div class="space-y-4 px-6 py-6 text-sm leading-relaxed text-slate-700">
+      <p class="font-medium text-slate-900">{{ message|default:'You do not have permission to access this resource.' }}</p>
+
+      {% if explanation %}
+      <div class="border border-slate-200 bg-[#FAFAFA] p-4">
+        <p class="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+          {% include 'tracker/_icon.html' with name='map-pin' cls='h-3.5 w-3.5' %} Location &amp; device context
+        </p>
+        <p>{{ explanation }}</p>
+      </div>
+      {% endif %}
+
+      {% if detected_ip %}
+      <dl class="grid grid-cols-2 gap-3 text-sm">
+        <div class="border border-slate-200 bg-white px-3.5 py-2.5">
+          <dt class="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Detected IP</dt>
+          <dd class="mt-1 font-mono font-semibold text-slate-800">{{ detected_ip }}</dd>
+        </div>
+        <div class="border border-slate-200 bg-white px-3.5 py-2.5">
+          <dt class="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Your role</dt>
+          <dd class="mt-1 font-semibold text-slate-800">{{ app_role|default:'—' }}</dd>
+        </div>
+      </dl>
+      {% endif %}
+
+      <p class="text-xs text-slate-500">
+        In production this gate also validates GPS geofencing and per-device
+        tokens before granting access (see the inline notes in
+        <code class="bg-slate-100 px-1 py-0.5">tracker/middleware.py</code>).
+      </p>
+
+      <div class="flex flex-wrap gap-3 pt-1">
+        {% if user.is_authenticated %}
+          <a href="{% url 'tracker:dashboard' %}{{ qp }}" class="btn-primary">{% include 'tracker/_icon.html' with name='layout-dashboard' cls='h-4.5 w-4.5' %} Back to my dashboard</a>
+        {% else %}
+          <a href="{% url 'tracker:login' %}{{ qp }}" class="btn-primary">{% include 'tracker/_icon.html' with name='logout' cls='h-4.5 w-4.5 rotate-180' %} Go to sign in</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

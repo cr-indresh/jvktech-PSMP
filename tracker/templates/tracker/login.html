@@ -1,0 +1,196 @@
+<!doctype html>
+{% load static %}
+{# ================================================================== #}
+{#  login.html -- LUXURY REDESIGN: JVK Technologies editorial auth     #}
+{#  Standalone screen — dark ink + gold, Playfair Display headings    #}
+{#  ALL form fields, demo sign-in JS, and Django logic preserved      #}
+{# ================================================================== #}
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Sign in · JVK Technologies</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            serif: ['"Playfair Display"', 'Georgia', '"Times New Roman"', 'serif'],
+          },
+          spacing: { 4.5: '1.125rem' },
+          colors: {
+            emerald: {
+              50: '#FAF6ED', 100: '#F5EED9', 200: '#E8D9B0',
+              300: '#D4B865', 400: '#C49A3A', 500: '#C49A3A',
+              600: '#C49A3A', 700: '#8E6E1F', 800: '#6B521A',
+              900: '#4A3A14', 950: '#2A1F0A',
+            },
+            teal: {
+              50: '#FAF6ED', 100: '#F5EED9', 200: '#E8D9B0',
+              300: '#D4B865', 400: '#C49A3A', 500: '#C49A3A',
+              600: '#C49A3A', 700: '#8E6E1F', 800: '#6B521A',
+              900: '#4A3A14', 950: '#2A1F0A',
+            },
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,500;1,600&display=swap" rel="stylesheet">
+
+  <style type="text/tailwindcss">
+    .input         { @apply w-full rounded-none border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm transition placeholder:text-slate-400 focus:border-[#C49A3A] focus:outline-none focus:ring-2 focus:ring-[#C49A3A]/20 disabled:bg-slate-100; }
+    .label         { @apply mb-1.5 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-600; }
+    .badge         { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold; }
+    .field-error   { @apply mt-1.5 flex items-center gap-1 text-xs font-medium text-rose-600; }
+    .btn-primary   { @apply inline-flex items-center justify-center gap-2 rounded-none bg-[#111111] px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-white shadow-sm transition hover:bg-[#C49A3A] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C49A3A] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60; }
+    .demo-chip     { @apply flex w-full items-center gap-3 border border-slate-200 bg-slate-50 px-3.5 py-3 text-left transition hover:border-[#C49A3A] hover:bg-[#FAF6ED] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C49A3A]; }
+  </style>
+  <style>
+    .field-icon input { padding-left: 2.75rem !important; }
+  </style>
+</head>
+
+<body class="flex min-h-screen flex-col bg-[#0F0F0F] font-sans text-slate-800 antialiased">
+  {# ---- Decorative CSS-only background ---- #}
+  <div class="pointer-events-none fixed inset-0 bg-gradient-to-br from-[#1a1a1a] via-[#0F0F0F] to-[#1a1510]" aria-hidden="true"></div>
+  <div class="pointer-events-none fixed -left-32 top-1/4 h-96 w-96 rounded-full bg-[#C49A3A]/8 blur-3xl" aria-hidden="true"></div>
+  <div class="pointer-events-none fixed -right-32 bottom-1/4 h-96 w-96 rounded-full bg-[#C49A3A]/5 blur-3xl" aria-hidden="true"></div>
+
+  <main class="relative z-10 flex flex-1 items-center justify-center px-4 py-10">
+    <div class="w-full max-w-md">
+
+      {# ---- Brand header ---- #}
+      <div class="mb-8 flex flex-col items-center gap-4 text-center">
+        <img src="{% static 'tracker/jvk-logo.png' %}" alt="JVK Logo" class="h-16 w-16 object-contain">
+        <div>
+          <h1 class="login-h1 font-serif text-2xl font-semibold tracking-tight text-white">JVK Technologies</h1>
+          <p class="mt-1 text-xs uppercase tracking-[0.2em] text-[#C49A3A]">Publication &amp; Sales Operations Management Portal</p>
+        </div>
+      </div>
+
+      {# ---- Sign-in card ---- #}
+      <div class="rounded-none border border-white/10 bg-white p-8 shadow-2xl shadow-black/50 sm:p-9">
+        <h2 class="font-serif text-2xl font-semibold tracking-tight text-slate-900">Welcome back</h2>
+        <p class="mb-7 mt-1 text-sm text-slate-500">Sign in to your role-separated workspace.</p>
+
+        {% if form.non_field_errors %}
+          <div class="mb-5 flex items-start gap-2.5 border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert">
+            {% include 'tracker/_icon.html' with name='alert-triangle' cls='h-4.5 w-4.5 shrink-0' %}
+            <div>{% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}</div>
+          </div>
+        {% endif %}
+
+        <form method="post" action="{% url 'tracker:login' %}{{ qp }}" novalidate>
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{{ request.GET.next|default:'' }}">
+
+          <div class="mb-4">
+            <label for="{{ form.username.id_for_label }}" class="label">Username</label>
+            <div class="relative field-icon">
+              <span class="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">{% include 'tracker/_icon.html' with name='user' cls='h-4.5 w-4.5' %}</span>
+              {{ form.username }}
+            </div>
+            {% for error in form.username.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+          </div>
+
+          <div class="mb-6">
+            <label for="{{ form.password.id_for_label }}" class="label">Password</label>
+            <div class="relative field-icon">
+              <span class="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">{% include 'tracker/_icon.html' with name='lock' cls='h-4.5 w-4.5' %}</span>
+              {{ form.password }}
+            </div>
+            {% for error in form.password.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+          </div>
+
+          <button type="submit" class="btn-primary w-full py-3">
+            {% include 'tracker/_icon.html' with name='lock' cls='h-4.5 w-4.5' %} Sign in securely
+          </button>
+        </form>
+
+        {# ---- Demo accounts: ONE-CLICK sign-in ---- #}
+        <div class="mt-7 border-t border-slate-200 pt-6">
+          <p class="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Demo accounts — one click to sign in</p>
+          <div class="space-y-2">
+            {% for account in demo_accounts %}
+            <button type="button" class="demo-chip group"
+                    data-username="{{ account.username }}" data-password="{{ account.password }}"
+                    aria-label="Sign in as {{ account.username }} ({{ account.role }})">
+              <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#C49A3A]/10 text-xs font-bold text-[#8E6E1F] ring-1 ring-inset ring-[#C49A3A]/20">{{ account.username|first|upper }}</span>
+              <span class="min-w-0 flex-1">
+                <span class="block truncate text-sm font-semibold text-slate-700">{{ account.username }}</span>
+                <span class="block truncate text-xs text-slate-500">{{ account.label }}</span>
+              </span>
+              <span class="badge shrink-0 {% if account.role == 'ADMIN' %}bg-slate-900 text-white{% elif account.role == 'ACCOUNTS' %}bg-[#FAF6ED] text-[#8E6E1F]{% else %}bg-[#F5EED9] text-[#8E6E1F]{% endif %}">{{ account.role }}</span>
+              <span class="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-[#C49A3A]" aria-hidden="true">{% include 'tracker/_icon.html' with name='logout' cls='h-4 w-4 rotate-180' %}</span>
+            </button>
+            {% endfor %}
+          </div>
+          <p class="mt-3 text-[11px] leading-relaxed text-slate-400">PoC convenience only — remove these accounts and this block before production.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  {# ---- Footer ---- #}
+  <footer class="relative z-10 mt-auto px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-2 text-center text-xs text-[#C49A3A]">
+    <p class="flex items-center justify-center gap-1.5">
+      {% include 'tracker/_icon.html' with name='shield' cls='h-3.5 w-3.5' %}
+      Protected by office-IP &amp; role-based security middleware
+    </p>
+    <p class="mt-1">
+      Django 5 · SQLite · Tailwind CSS — Proof of Concept
+    </p>
+  </footer>
+
+  {# ---- Toast stack ---- #}
+  <div id="toast-stack" class="pointer-events-none fixed bottom-5 right-5 z-[60] flex w-[min(92vw,360px)] flex-col gap-2" aria-live="polite"></div>
+
+  <script>
+    /* Minimal toast helper (login.html does not extend base.html). */
+    window.showToast = function (message, type) {
+      const stack = document.getElementById('toast-stack');
+      if (!stack) return;
+      const palette = {
+        success: 'border-[#C49A3A]/20 bg-[#FAF6ED] text-[#8E6E1F]',
+        error:   'border-rose-200 bg-rose-50 text-rose-800',
+        info:    'border-slate-200 bg-white text-slate-700',
+      }[type] || 'border-slate-200 bg-white text-slate-700';
+      const el = document.createElement('div');
+      el.className = 'pointer-events-auto flex items-start gap-2.5 border px-4 py-3 text-sm shadow-lg shadow-slate-900/10 transition-opacity duration-300 ' + palette;
+      el.setAttribute('role', 'alert');
+      el.innerHTML = '<p class="flex-1"></p><button type="button" class="-m-1 rounded p-1 opacity-60 transition hover:opacity-100" aria-label="Dismiss">&times;</button>';
+      el.querySelector('p').textContent = message;
+      el.querySelector('button').addEventListener('click', function () { dismiss(); });
+      stack.appendChild(el);
+      let timer = null;
+      function dismiss() {
+        if (timer) clearTimeout(timer);
+        el.style.opacity = '0';
+        setTimeout(function () { el.remove(); }, 320);
+      }
+      timer = setTimeout(dismiss, 4200);
+    };
+
+    /* One-click demo sign-in: fill the credentials AND submit the form. */
+    document.querySelectorAll('.demo-chip').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        const form = document.querySelector('form[action*="/login"]');
+        const userInput = document.querySelector('input[name="username"]');
+        const passInput = document.querySelector('input[name="password"]');
+        if (!form || !userInput || !passInput) return;
+        userInput.value = chip.dataset.username;
+        passInput.value = chip.dataset.password;
+        window.showToast('Signing in as ' + chip.dataset.username + '…', 'info');
+        form.submit();
+      });
+    });
+  </script>
+</body>
+</html>

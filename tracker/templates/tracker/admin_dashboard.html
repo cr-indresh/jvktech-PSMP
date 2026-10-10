@@ -1,0 +1,583 @@
+{% extends 'tracker/base.html' %}
+{# ================================================================== #}
+{#  admin_dashboard.html -- Admin analytics (PSMP / FTSD 5.0):         #}
+{#    - Filter sidebar (lifecycle stage, BDE, publication category,    #}
+{#      payment status: Fully Paid / Advance Paid / Overdue, date      #}
+{#      range, free search) -> server-side filtered GET form.          #}
+{#    - KPI cards (Receivables vs Collected, Net revenue, Pending).    #}
+{#    - Outstanding balance AGING report per BDE.                      #}
+{#    - Volume breakdown by publication category + results table.      #}
+{#    - One-click CSV export of the filtered table.                    #}
+{# ================================================================== #}
+{% load humanize %}
+{% block title %}Admin Dashboard{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex flex-wrap items-end justify-between gap-4">
+  <div>
+    <h1 class="text-2xl font-bold tracking-tight text-slate-900">Admin Dashboard</h1>
+    <p class="mt-1 text-sm text-slate-500">Full-funnel analytics across every BDE, publication category and lifecycle stage — remote access enabled for admins.</p>
+  </div>
+  {# One-click export of the CURRENTLY FILTERED table (FTSD 5.0 Export Engine). #}
+  <a id="export-csv-btn" href="{% url 'tracker:admin_export_csv' %}{{ qp }}" class="btn-secondary" download>
+    {% include 'tracker/_icon.html' with name='download' cls='h-4.5 w-4.5' %} Export CSV
+  </a>
+</div>
+
+<div class="grid gap-6 lg:grid-cols-[290px,minmax(0,1fr)]">
+
+  {# ================= FILTER SIDEBAR ================= #}
+  <aside class="card h-fit overflow-hidden lg:sticky lg:top-6" aria-label="Dashboard filters">
+    <form method="get" action="{% url 'tracker:admin_dashboard' %}{{ qp }}" class="block" id="filter-form">
+      {# Preserve the sandbox gateway param across GET form submissions (HTML drops action query strings). #}
+      {% if xport %}<input type="hidden" name="XTransformPort" value="{{ xport }}">{% endif %}
+      <div class="border-b border-slate-200 px-5 py-4">
+        <h2 class="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-500">
+          {% include 'tracker/_icon.html' with name='filter' cls='h-4 w-4' %} Filters
+        </h2>
+      </div>
+
+      <div class="space-y-4 px-5 py-5">
+        <div>
+          <label for="filter-q" class="label">Search</label>
+          <div class="relative">
+            <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">{% include 'tracker/_icon.html' with name='search' cls='h-4 w-4' %}</span>
+            <input type="search" id="filter-q" name="q" value="{{ filters.q }}" class="input !pl-10" placeholder="Title or author name…">
+          </div>
+        </div>
+
+        <div>
+          <label for="filter-status" class="label">Lifecycle stage</label>
+          <select id="filter-status" name="status" class="input" data-autosubmit>
+            <option value="">All stages</option>
+            <option value="DRAFT" {% if filters.status == 'DRAFT' %}selected{% endif %}>Draft</option>
+            <option value="SUBMITTED" {% if filters.status == 'SUBMITTED' %}selected{% endif %}>Submitted</option>
+            <option value="UNDER_REVIEW" {% if filters.status == 'UNDER_REVIEW' %}selected{% endif %}>Under Review</option>
+            <option value="ACCEPTED" {% if filters.status == 'ACCEPTED' %}selected{% endif %}>Accepted</option>
+            <option value="PUBLISHED" {% if filters.status == 'PUBLISHED' %}selected{% endif %}>Published</option>
+            <option value="COMPLETED" {% if filters.status == 'COMPLETED' %}selected{% endif %}>Completed</option>
+            <option value="WITHDRAWN" {% if filters.status == 'WITHDRAWN' %}selected{% endif %}>Withdrawn</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="filter-bde" class="label">BDE (sales owner)</label>
+          <select id="filter-bde" name="bde" class="input" data-autosubmit>
+            <option value="">All BDEs</option>
+            {% for bde in bdes %}
+              <option value="{{ bde.pk }}" {% if filters.bde == bde.pk|stringformat:"s" %}selected{% endif %}>{{ bde.get_full_name|default:bde.username }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <label for="filter-service" class="label">Publication category</label>
+          <select id="filter-service" name="service" class="input" data-autosubmit>
+            <option value="">All categories</option>
+            {% for s in service_types %}
+              <option value="{{ s.pk }}" {% if filters.service == s.pk|stringformat:"s" %}selected{% endif %}>{{ s.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <label for="filter-payment" class="label">Payment status</label>
+          <select id="filter-payment" name="payment_state" class="input" data-autosubmit title="Fully Paid: verified collections cover the net value · Advance Paid: partially collected · Overdue: balance due and the deal is late (Accepted/Published/Completed or older than 30 days)">
+            <option value="">All projects</option>
+            <option value="fully_paid" {% if filters.payment_state == 'fully_paid' %}selected{% endif %}>Fully Paid</option>
+            <option value="advance_paid" {% if filters.payment_state == 'advance_paid' %}selected{% endif %}>Advance Paid</option>
+            <option value="overdue" {% if filters.payment_state == 'overdue' %}selected{% endif %}>Overdue</option>
+            <option value="unpaid" {% if filters.payment_state == 'unpaid' %}selected{% endif %}>Unpaid (nothing collected)</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="filter-date-from" class="label">Created from</label>
+          <input type="date" id="filter-date-from" name="date_from" value="{{ filters.date_from }}" class="input" data-autosubmit>
+        </div>
+        <div>
+          <label for="filter-date-to" class="label">Created to</label>
+          <input type="date" id="filter-date-to" name="date_to" value="{{ filters.date_to }}" class="input" data-autosubmit>
+        </div>
+
+        <div class="flex gap-2 pt-1">
+          <button type="submit" class="btn-primary flex-1">
+            {% include 'tracker/_icon.html' with name='filter' cls='h-4.5 w-4.5' %} Apply
+          </button>
+          <a href="{% url 'tracker:admin_dashboard' %}{{ qp }}" class="btn-secondary" title="Reset all filters">
+            {% include 'tracker/_icon.html' with name='refresh-cw' cls='h-4.5 w-4.5' %}
+          </a>
+        </div>
+      </div>
+    </form>
+  </aside>
+
+  {# ================= RESULTS COLUMN ================= #}
+  <div class="min-w-0 space-y-6">
+
+    {# ---- KPI cards (FTSD 5.0: Total Receivables vs Total Collected ...) ---- #}
+    <div class="grid grid-cols-2 gap-4 xl:grid-cols-3">
+      <div class="card flex items-start gap-4 p-5">
+        <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 text-white">{% include 'tracker/_icon.html' with name='briefcase' %}</span>
+        <div class="min-w-0">
+          <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Total projects</p>
+          <p class="text-2xl font-bold tracking-tight text-slate-900">{{ stats.project_count }}</p>
+        </div>
+      </div>
+      <div class="card flex items-start gap-4 p-5">
+        <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-teal-100 text-teal-700">{% include 'tracker/_icon.html' with name='trending-up' %}</span>
+        <div class="min-w-0">
+          <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Net billable</p>
+          <p class="truncate text-2xl font-bold tracking-tight text-slate-900">₹{{ stats.net_value|floatformat:0|intcomma }}</p>
+        </div>
+      </div>
+      <div class="card flex items-start gap-4 p-5">
+        <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">{% include 'tracker/_icon.html' with name='banknote' %}</span>
+        <div class="min-w-0">
+          <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Total collected</p>
+          <p class="truncate text-2xl font-bold tracking-tight text-slate-900">₹{{ stats.collected|floatformat:0|intcomma }}</p>
+        </div>
+      </div>
+      <div class="card flex items-start gap-4 p-5">
+        <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-rose-100 text-rose-700">{% include 'tracker/_icon.html' with name='wallet' %}</span>
+        <div class="min-w-0">
+          <p class="text-xs font-medium uppercase tracking-wide text-slate-500" title="Net billable minus verified collections">Total receivables</p>
+          <p class="truncate text-2xl font-bold tracking-tight text-slate-900">₹{{ stats.receivables|floatformat:0|intcomma }}</p>
+        </div>
+      </div>
+      <div class="card flex items-start gap-4 p-5">
+        <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-100 text-amber-700">{% include 'tracker/_icon.html' with name='clock' %}</span>
+        <div class="min-w-0">
+          <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Pending verification</p>
+          <p class="truncate text-2xl font-bold tracking-tight text-slate-900">₹{{ stats.pending_amount|floatformat:0|intcomma }}</p>
+        </div>
+      </div>
+      <div class="card flex items-start gap-4 p-5">
+        <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-600 text-white">{% include 'tracker/_icon.html' with name='badge-check' %}</span>
+        <div class="min-w-0">
+          <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Published</p>
+          <p class="text-2xl font-bold tracking-tight text-slate-900">{{ stats.published_count }}</p>
+        </div>
+      </div>
+    </div>
+
+    {# ---- Outstanding balance AGING report per BDE (FTSD 5.0) ---- #}
+    <div class="card overflow-hidden">
+      <div class="border-b border-slate-200 px-6 py-4">
+        <h2 class="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-500">
+          {% include 'tracker/_icon.html' with name='wallet' cls='h-4 w-4' %} Outstanding balance aging — per BDE
+        </h2>
+        <p class="mt-0.5 text-xs text-slate-500">Balance due (net billable − verified collections) bucketed by project age. Overdue = balance outstanding on a deal that is Accepted / Published / Completed or older than 30 days.</p>
+      </div>
+      {% if aging %}
+      <div class="overflow-x-auto scroll-thin">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="th">BDE</th>
+              <th class="th">Open projects</th>
+              <th class="th">0–30 days (₹)</th>
+              <th class="th">31–60 days (₹)</th>
+              <th class="th">60+ days (₹)</th>
+              <th class="th">Total outstanding (₹)</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 bg-white">
+            {% for a in aging %}
+            <tr class="{% if forloop.first %}bg-rose-50/30{% endif %}">
+              <td class="td text-xs font-semibold text-slate-700">{{ a.bde_name }}</td>
+              <td class="td text-xs text-slate-600">{{ a.open_projects }}</td>
+              <td class="td text-xs text-slate-600">₹{{ a.d0_30|floatformat:0|intcomma }}</td>
+              <td class="td text-xs text-amber-700">₹{{ a.d31_60|floatformat:0|intcomma }}</td>
+              <td class="td text-xs font-semibold text-rose-700">₹{{ a.d60_plus|floatformat:0|intcomma }}</td>
+              <td class="td text-xs font-bold text-slate-900">₹{{ a.outstanding|floatformat:0|intcomma }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="px-6 py-6 text-center text-sm text-slate-500">No outstanding balances — everything in the current filter is fully collected.</p>
+      {% endif %}
+    </div>
+
+    {# ---- Volume breakdown by publication category (FTSD 5.0) ---- #}
+    <div class="card p-5">
+      <h2 class="mb-4 text-sm font-bold uppercase tracking-wider text-slate-500">Volume breakdown by publication category</h2>
+      {% with max_count=stats.project_count %}
+      <div class="space-y-3">
+        {% for item in service_breakdown %}
+        {% if item.count %}
+        <div>
+          <div class="mb-1 flex items-center justify-between text-xs font-medium">
+            <span class="text-slate-600">{{ item.name }}</span>
+            <span class="text-slate-500">{{ item.count }}</span>
+          </div>
+          <div class="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+            <div class="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400" style="width: {% widthratio item.count max_count|default:1 100 %}%"></div>
+          </div>
+        </div>
+        {% endif %}
+        {% empty %}
+        <p class="text-sm text-slate-500">No services defined.</p>
+        {% endfor %}
+      </div>
+      {% endwith %}
+    </div>
+
+    {# ---- Results table ---- #}
+    <section class="card overflow-hidden">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-5">
+        <div>
+          <h2 class="text-lg font-bold tracking-tight text-slate-900">Tracking table</h2>
+          <p class="mt-0.5 text-sm text-slate-500">
+            {% if filters.q or filters.status or filters.bde or filters.service or filters.payment_state or filters.date_from or filters.date_to %}
+              Filtered results — <a href="{% url 'tracker:admin_dashboard' %}{{ qp }}" class="font-semibold text-emerald-700 hover:underline">clear filters</a>
+            {% else %}
+              All projects, newest first.
+            {% endif %}
+          </p>
+        </div>
+        <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">{{ stats.project_count }} shown</span>
+      </div>
+
+      <div class="max-h-[560px] overflow-auto scroll-thin">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="sticky top-0 z-10 bg-slate-50">
+            <tr>
+              <th class="th">Project</th>
+              <th class="th">BDE</th>
+              <th class="th">Category</th>
+              <th class="th">Slots</th>
+              <th class="th">Net (₹)</th>
+              <th class="th">Collected / Pending (₹)</th>
+              <th class="th">Balance due (₹)</th>
+              <th class="th">Payment state</th>
+              <th class="th">Lifecycle</th>
+              <th class="th">Created</th>
+              <th class="th"><span class="sr-only">View</span></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 bg-white">
+            {% for project in projects %}
+            <tr class="transition hover:bg-emerald-50/40">
+              <td class="td min-w-[160px] max-w-[280px]">
+                <a href="{% url 'tracker:project_detail' project.pk %}{{ qp }}" class="block truncate font-semibold text-slate-800 hover:text-emerald-700 hover:underline" title="{{ project.title }}">{{ project.title }}</a>
+                {% if project.remarks %}<p class="mt-0.5 truncate text-xs text-slate-500" title="{{ project.remarks }}">{{ project.remarks }}</p>{% endif %}
+              </td>
+              <td class="td text-xs text-slate-600">{{ project.bde.get_full_name|default:project.bde.username }}</td>
+              <td class="td"><span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">{{ project.service_type.name }}</span></td>
+              <td class="td">
+                <span class="inline-flex items-center gap-1.5" title="{{ project.authors_count }} of {{ project.total_slots }} provisioned slots booked">{% include 'tracker/_icon.html' with name='users' cls='h-3.5 w-3.5 text-slate-400' %} {{ project.authors_count }}/{{ project.total_slots }}</span>
+              </td>
+              <td class="td font-semibold text-slate-900">₹{{ project.net_value|floatformat:0|intcomma }}</td>
+              <td class="td text-xs">
+                <span class="font-semibold text-emerald-700">₹{{ project.total_collected|floatformat:0|intcomma }}</span>
+                <span class="text-slate-400">/</span>
+                <span class="font-semibold text-amber-700">₹{{ project.total_pending|floatformat:0|intcomma }}</span>
+              </td>
+              <td class="td text-xs font-semibold {% if project.balance_due > 0 %}text-rose-700{% else %}text-slate-400{% endif %}">₹{{ project.balance_due|floatformat:0|intcomma }}</td>
+              <td class="td">
+                {% if project.payment_state == 'fully_paid' %}
+                <span class="badge bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-600/20">Fully Paid</span>
+                {% elif project.payment_state == 'overdue' %}
+                <span class="badge bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-600/20">{% include 'tracker/_icon.html' with name='alert-triangle' cls='h-3.5 w-3.5' %} Overdue</span>
+                {% elif project.payment_state == 'advance_paid' %}
+                <span class="badge bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-600/20">Advance Paid</span>
+                {% else %}
+                <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">Unpaid</span>
+                {% endif %}
+              </td>
+              <td class="td">{% include 'tracker/_status_badge.html' with status=project.publication_status %}</td>
+              <td class="td text-xs text-slate-500">{{ project.created_at|date:"d M Y" }}</td>
+              <td class="td">
+                <a href="{% url 'tracker:project_detail' project.pk %}{{ qp }}" class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500" aria-label="View {{ project.title }}">
+                  {% include 'tracker/_icon.html' with name='eye' cls='h-4.5 w-4.5' %}
+                </a>
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="11" class="px-6 py-14 text-center">
+                {% include 'tracker/_icon.html' with name='search' cls='mx-auto h-8 w-8 text-slate-300' %}
+                <p class="mt-2 text-sm font-medium text-slate-500">No projects match the current filters.</p>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    {# ================================================================== #}
+    {#  PAYMENT LEDGER -- the UTR register: every payment entry in the    #}
+    {#  database with its paying author (authors pay individually), the   #}
+    {#  Transaction ref (UTR) and the database ENTRY ID, so Admin and     #}
+    {#  Accounts can reference a payment unambiguously.                   #}
+    {# ================================================================== #}
+    <section id="payment-ledger" class="card scroll-mt-24 overflow-hidden" data-author-map="{{ ledger_author_map_json }}">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-5">
+        <div>
+          <h2 class="flex items-center gap-2 text-lg font-bold tracking-tight text-slate-900">
+            {% include 'tracker/_icon.html' with name='receipt' cls='h-5 w-5 text-teal-600' %} Payment ledger — UTR register
+          </h2>
+          <p class="mt-0.5 text-sm text-slate-500">
+            Every payment entry in the database with its paying author, Transaction ref (UTR) and entry ID — the same register the Accounts team clears against the bank feeds. Admin can override any entry.
+          </p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">{{ payment_ledger|length }} entries</span>
+          <span class="badge bg-teal-100 text-teal-800 ring-1 ring-inset ring-teal-600/20">UTR visible to Admin &amp; Accounts</span>
+        </div>
+      </div>
+
+      <div class="max-h-[460px] overflow-auto scroll-thin">
+        <table class="min-w-full divide-y divide-slate-200">
+          <thead class="sticky top-0 z-10 bg-slate-50">
+            <tr>
+              <th class="th">Entry ID</th>
+              <th class="th">Project</th>
+              <th class="th">Paid by</th>
+              <th class="th">Phase</th>
+              <th class="th">Amount (₹)</th>
+              <th class="th">Transaction ref (UTR)</th>
+              <th class="th">Mode / date</th>
+              <th class="th">Status</th>
+              <th class="th">Cleared by</th>
+              <th class="th">Admin override</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 bg-white">
+            {% for inst in payment_ledger %}
+            <tr{% if inst.verification_status == 'REJECTED' %} class="bg-rose-50/40"{% endif %}>
+              <td class="td">
+                <span class="font-mono text-xs font-semibold text-slate-700" title="Database entry ID">#{{ inst.pk }}</span>
+                <p class="mt-0.5 text-[10px] text-slate-400" title="Installment log number within the project">Log {{ inst.installment_number }}</p>
+              </td>
+              <td class="td min-w-[160px] max-w-[260px]">
+                <a href="{% url 'tracker:project_detail' inst.project.pk %}{{ qp }}" class="block truncate font-semibold text-slate-800 hover:text-emerald-700 hover:underline" title="{{ inst.project.title }}">{{ inst.project.title }}</a>
+                <p class="mt-0.5 truncate text-xs text-slate-500">{{ inst.project.bde.get_full_name|default:inst.project.bde.username }} · {{ inst.project.service_type.name }}</p>
+              </td>
+              <td class="td">
+                {# Authors pay individually -- the paying author of this entry #}
+                {% if inst.author %}
+                <p class="max-w-[150px] truncate text-sm font-medium text-slate-800" title="{{ inst.author.name }} ({{ inst.author.position_label }})">{{ inst.author.name }}</p>
+                <p class="text-[10px] font-medium text-slate-400">{{ inst.author.position_label }}</p>
+                {% else %}
+                <span class="text-xs italic text-slate-400">Not linked</span>
+                {% endif %}
+              </td>
+              <td class="td"><span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">{{ inst.get_payment_type_display }}</span></td>
+              <td class="td font-semibold text-slate-900">₹{{ inst.amount_paid|floatformat:0|intcomma }}</td>
+              <td class="td font-mono text-xs text-slate-600" title="Transaction reference (encrypted at rest)">{{ inst.transaction_ref }}</td>
+              <td class="td text-xs text-slate-600">
+                <p>{{ inst.get_payment_mode_display }}</p>
+                {% if inst.payment_date %}<p class="text-slate-400">{{ inst.payment_date|date:"d M Y" }}</p>{% endif %}
+              </td>
+              <td class="td">
+                {% if inst.verification_status == 'VERIFIED' %}
+                <span class="badge bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-600/20">{% include 'tracker/_icon.html' with name='check-circle' cls='h-3.5 w-3.5' %} Verified</span>
+                {% elif inst.verification_status == 'REJECTED' %}
+                <span class="badge bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-600/20">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} Rejected</span>
+                {% else %}
+                <span class="badge bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-600/20">{% include 'tracker/_icon.html' with name='clock' cls='h-3.5 w-3.5' %} On review</span>
+                {% endif %}
+              </td>
+              <td class="td text-xs text-slate-500">
+                {% if inst.verified_by %}
+                  {{ inst.verified_by.get_full_name|default:inst.verified_by.username }}
+                  <p class="mt-0.5 text-[10px] text-slate-400">{{ inst.verification_date|date:"d M Y, H:i" }}</p>
+                {% else %}
+                  <span class="italic text-slate-400">—</span>
+                {% endif %}
+              </td>
+              <td class="td">
+                <div class="flex items-center gap-1.5">
+                  <button type="button"
+                          class="admin-payment-edit inline-flex h-8 items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                          data-pk="{{ inst.pk }}"
+                          data-log="{{ inst.installment_number }}"
+                          data-project="{{ inst.project.title|escape }}"
+                          data-phase="{{ inst.payment_type }}"
+                          data-amount="{{ inst.amount_paid|floatformat:2 }}"
+                          data-utr="{{ inst.transaction_ref|escape }}"
+                          data-mode="{{ inst.payment_mode }}"
+                          data-date="{% if inst.payment_date %}{{ inst.payment_date|date:'Y-m-d' }}{% endif %}"
+                          data-remarks="{{ inst.remarks|escape }}"
+                          data-author="{% if inst.author %}{{ inst.author.pk }}{% endif %}"
+                          title="Edit this payment (admin override — works even on verified rows)">
+                    {% include 'tracker/_icon.html' with name='pencil' cls='h-3.5 w-3.5' %} Edit
+                  </button>
+                  {% if inst.verification_status == 'VERIFIED' %}
+                  <form method="post" action="{% url 'tracker:admin_payment_revert' inst.pk %}{{ qp }}" class="inline"
+                        onsubmit="return confirm('Revert the verification of payment #{{ inst.installment_number }} ({{ inst.project.title|escape }})? It goes back to Pending and the owning BDE can edit it again.');">
+                    {% csrf_token %}
+                    <button type="submit" class="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                            title="Undo the Accountant's verification (VERIFIED → Pending)">
+                      {% include 'tracker/_icon.html' with name='refresh-cw' cls='h-3.5 w-3.5' %} Revert
+                    </button>
+                  </form>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="10" class="px-6 py-14 text-center">
+                {% include 'tracker/_icon.html' with name='receipt' cls='mx-auto h-8 w-8 text-slate-300' %}
+                <p class="mt-2 text-sm font-medium text-slate-500">No payment entries in the database yet.</p>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    {# ================= ADMIN payment OVERRIDE modal ================= #}
+    <div id="admin-override-modal" class="fixed inset-0 z-50 hidden items-center justify-center px-4 py-6" role="dialog" aria-modal="true" aria-labelledby="admin-override-title" data-edit-tpl="/admin-panel/payments/__PK__/edit/{{ qp }}">
+      <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" data-override-close></div>
+      <div class="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl scroll-thin">
+        <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+          <div>
+            <h2 id="admin-override-title" class="text-lg font-bold tracking-tight text-slate-900">Admin override — edit payment</h2>
+            <p id="admin-override-sub" class="mt-0.5 truncate text-sm text-slate-500">—</p>
+          </div>
+          <button type="button" class="-m-1 rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600" data-override-close aria-label="Close modal">
+            {% include 'tracker/_icon.html' with name='x' cls='h-5 w-5' %}
+          </button>
+        </div>
+        <form id="admin-override-form" method="post" action="#" class="space-y-4 px-6 py-5">
+          {% csrf_token %}
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label for="ov-amount" class="label">Amount paid (₹) <span class="text-rose-500">*</span></label>
+              <input id="ov-amount" name="amount_paid" type="number" step="0.01" min="0.01" required class="input">
+            </div>
+            <div>
+              <label for="ov-utr" class="label">Transaction ref (UTR) <span class="text-rose-500">*</span></label>
+              <input id="ov-utr" name="transaction_ref" type="text" maxlength="255" required class="input font-mono">
+            </div>
+            <div>
+              <label for="ov-phase" class="label">Payment phase <span class="text-rose-500">*</span></label>
+              <select id="ov-phase" name="payment_type" class="input">
+                <option value="ADVANCE_1">Advance Amount</option>
+                <option value="ADVANCE_2">Installment 2</option>
+                <option value="REMAINING">Remaining / Full Settlement</option>
+              </select>
+            </div>
+            <div>
+              <label for="ov-mode" class="label">Payment mode <span class="text-rose-500">*</span></label>
+              <select id="ov-mode" name="payment_mode" class="input">
+                <option value="UPI">UPI</option>
+                <option value="BANK_TRANSFER">Bank Transfer</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </div>
+            <div>
+              <label for="ov-date" class="label">Payment date</label>
+              <input id="ov-date" name="payment_date" type="date" class="input">
+            </div>
+            <div>
+              <label for="ov-author" class="label">Paid by author <span class="text-rose-500">*</span></label>
+              <select id="ov-author" name="author" class="input" required></select>
+            </div>
+            <div class="sm:col-span-2">
+              <label for="ov-remarks" class="label">Remarks</label>
+              <input id="ov-remarks" name="remarks" type="text" maxlength="250" class="input">
+            </div>
+          </div>
+          <p class="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 ring-1 ring-inset ring-amber-600/20">
+            <strong>Admin override:</strong> this edit works even on VERIFIED payments and payments owned by any BDE. The change is recorded in the audit trail with its old → new values. The stored proof photo is kept.
+          </p>
+          <div class="flex justify-end gap-2 pt-1">
+            <button type="button" class="btn h-10 border border-slate-300 bg-white text-slate-600 hover:bg-slate-50" data-override-close>Cancel</button>
+            <button type="submit" class="btn btn-primary h-10">{% include 'tracker/_icon.html' with name='check-circle' cls='h-4 w-4' %} Save override</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+  /* Auto-submit the filter sidebar when a select / date changes (search +
+     Apply button remain manual for typing convenience). */
+  document.querySelectorAll('[data-autosubmit]').forEach(function (el) {
+    el.addEventListener('change', function () { el.form.submit(); });
+  });
+
+  /* The CSV export reuses the CURRENT filter state: mirror every filter
+     input of the filter form onto the export link's query string. */
+  var exportBtn = document.getElementById('export-csv-btn');
+  var filterForm = document.getElementById('filter-form');
+  if (exportBtn && filterForm) {
+    var base = exportBtn.getAttribute('href').split('?')[0];
+    function refreshExportUrl() {
+      var params = new URLSearchParams(new FormData(filterForm)).toString();
+      exportBtn.setAttribute('href', base + (params ? '?' + params : ''));
+    }
+    filterForm.addEventListener('change', refreshExportUrl);
+    refreshExportUrl();
+  }
+</script>
+<script>
+  /* ===== ADMIN payment override modal (edit ANY payment) ===== */
+  (function () {
+    var ledger = document.getElementById('payment-ledger');
+    var modal = document.getElementById('admin-override-modal');
+    if (!ledger || !modal) return;
+
+    var authorMap = {};
+    try { authorMap = JSON.parse(ledger.dataset.authorMap || '{}'); } catch (e) { authorMap = {}; }
+    var form = document.getElementById('admin-override-form');
+
+    function fill(btn) {
+      var d = btn.dataset;
+      document.getElementById('admin-override-sub').textContent =
+        'Payment #' + d.log + ' · ' + d.project + ' · Entry ID #' + d.pk;
+      form.action = modal.dataset.editTpl.replace('__PK__', d.pk);
+      document.getElementById('ov-amount').value = d.amount || '';
+      document.getElementById('ov-utr').value = d.utr || '';
+      document.getElementById('ov-phase').value = d.phase || 'ADVANCE_1';
+      document.getElementById('ov-mode').value = d.mode || 'UPI';
+      document.getElementById('ov-date').value = d.date || '';
+      document.getElementById('ov-remarks').value = d.remarks || '';
+      var sel = document.getElementById('ov-author');
+      sel.innerHTML = '';
+      (authorMap[d.pk] || []).forEach(function (a) {
+        var opt = document.createElement('option');
+        opt.value = a.id;
+        opt.textContent = a.label;
+        if (String(a.id) === String(d.author || '')) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+
+    function open(btn) {
+      fill(btn);
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      document.body.style.overflow = 'hidden';
+    }
+    function close() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      document.body.style.overflow = '';
+    }
+
+    ledger.addEventListener('click', function (e) {
+      var btn = e.target.closest('.admin-payment-edit');
+      if (btn) { e.preventDefault(); open(btn); }
+    });
+    modal.addEventListener('click', function (e) {
+      if (e.target.closest('[data-override-close]')) close();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
+    });
+  })();
+</script>
+{% endblock %}

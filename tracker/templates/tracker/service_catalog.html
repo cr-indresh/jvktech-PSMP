@@ -1,0 +1,190 @@
+{% extends 'tracker/base.html' %}
+{# ================================================================== #}
+{#  service_catalog.html -- ADMIN: dynamic service master (FTSD 3.1 /  #}
+{#  transcript 2): publication categories with base prices and the    #}
+{#  author slots provisioned for new projects.                        #}
+{# ================================================================== #}
+{% load humanize %}
+{% block title %}Service Catalog{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold tracking-tight text-slate-900">Service Catalog</h1>
+  <p class="mt-1 text-sm text-slate-500">The publication categories your team sells — base prices and the author slots provisioned for new projects (FTSD §3.1 / §4.1.2).</p>
+</div>
+
+<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+
+  {# ---- Catalogue table + per-row edit forms ---- #}
+  <section class="card overflow-hidden">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-5">
+      <div>
+        <h2 class="text-lg font-bold tracking-tight text-slate-900">Publication categories</h2>
+        <p class="mt-0.5 text-sm text-slate-500">Deactivated categories keep their history but disappear from the BDE creation form.</p>
+      </div>
+      <span class="badge bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-600/20">{{ services|length }} total</span>
+    </div>
+
+    <div class="max-h-[620px] overflow-auto scroll-thin">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="sticky top-0 z-10 bg-slate-50">
+          <tr>
+            <th class="th">Service</th>
+            <th class="th">Base price (₹)</th>
+            <th class="th hidden">Author slots</th>
+            <th class="th">Status</th>
+            <th class="th">Manage</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 bg-white">
+          {% for row in service_rows %}
+        {% with service=row.service svc_form=row.form %}
+          <tr id="svc-row-{{ service.pk }}" class="{% if not service.is_active %}opacity-60{% endif %}">
+            <td class="td min-w-[180px] max-w-[280px]">
+              <p class="truncate font-semibold text-slate-800" title="{{ service.name }}">{{ service.name }}</p>
+              {% if service.description %}<p class="mt-0.5 truncate text-xs text-slate-500" title="{{ service.description }}">{{ service.description }}</p>{% endif %}
+            </td>
+            <td class="td font-semibold text-slate-900">₹{{ service.base_price|floatformat:0|intcomma }}</td>
+            <td class="td hidden">
+              <span class="inline-flex items-center gap-1.5" title="Author slots provisioned for a new project of this type">{% include 'tracker/_icon.html' with name='users' cls='h-3.5 w-3.5 text-slate-400' %} {{ service.default_slots }}</span>
+            </td>
+            <td class="td">
+              {% if service.is_active %}
+              <span class="badge bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-600/20">{% include 'tracker/_icon.html' with name='check-circle' cls='h-3.5 w-3.5' %} Active</span>
+              {% else %}
+              <span class="badge bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-500/20">Inactive</span>
+              {% endif %}
+            </td>
+            <td class="td">
+              <button type="button" class="svc-edit-btn inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500" data-svc="{{ service.pk }}" aria-expanded="false" aria-controls="svc-edit-{{ service.pk }}">
+                {% include 'tracker/_icon.html' with name='pencil' cls='h-3.5 w-3.5' %} Edit
+              </button>
+            </td>
+          </tr>
+          <tr id="svc-edit-{{ service.pk }}" class="svc-edit-row hidden">
+            <td colspan="4" class="bg-slate-50/80 px-6 py-4">
+              <form method="post" action="{% url 'tracker:service_update' service.pk %}{{ qp }}" class="space-y-3">
+                {% csrf_token %}
+                <p class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  {% include 'tracker/_icon.html' with name='pencil' cls='h-3.5 w-3.5' %} Edit “{{ service.name }}”
+                </p>
+                <div class="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label for="{{ svc_form.name.id_for_label }}" class="label">Service name <span class="text-rose-500">*</span></label>
+                    {{ svc_form.name }}
+                    {% for error in svc_form.name.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+                  </div>
+                  <div>
+                    <label for="{{ svc_form.base_price.id_for_label }}" class="label">Base price (₹)</label>
+                    {{ svc_form.base_price }}
+                    {% for error in svc_form.base_price.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+                  </div>
+                  <div class="hidden">
+                    <label for="{{ svc_form.default_slots.id_for_label }}" class="label">Author slots provisioned</label>
+                    {{ svc_form.default_slots }}
+                    {% for error in svc_form.default_slots.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+                  </div>
+                  <div class="flex items-end gap-2.5">
+                    <label for="{{ svc_form.is_active.id_for_label }}" class="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
+                      {{ svc_form.is_active }} Active in catalogue
+                    </label>
+                  </div>
+                  <div class="md:col-span-2">
+                    <label for="{{ svc_form.description.id_for_label }}" class="label">Description</label>
+                    {{ svc_form.description }}
+                  </div>
+                </div>
+                <div class="flex flex-wrap items-center justify-end gap-2.5 border-t border-slate-200/80 pt-3">
+                  <button type="button" class="svc-cancel-btn btn-secondary !px-3.5 !py-2 !text-xs">Cancel</button>
+                  <button type="submit" class="btn-primary !px-3.5 !py-2 !text-xs">
+                    {% include 'tracker/_icon.html' with name='check-circle' cls='h-4 w-4' %} Save service
+                  </button>
+                </div>
+              </form>
+            </td>
+          </tr>
+          {% endwith %}
+          {% empty %}
+          <tr>
+            <td colspan="5" class="px-6 py-14 text-center">
+              {% include 'tracker/_icon.html' with name='file-text' cls='mx-auto h-8 w-8 text-slate-300' %}
+              <p class="mt-2 text-sm font-medium text-slate-500">No services yet — add the first one on the right.</p>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {# ---- Add form ---- #}
+  <aside class="card h-fit overflow-hidden lg:sticky lg:top-6" aria-label="Add a service">
+    <div class="border-b border-slate-200 px-5 py-4">
+      <h2 class="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-500">
+        {% include 'tracker/_icon.html' with name='plus' cls='h-4 w-4' %} Add a service
+      </h2>
+    </div>
+    <form method="post" action="{% url 'tracker:service_add' %}{{ qp }}" class="space-y-3 px-5 py-5">
+      {% csrf_token %}
+      <div>
+        <label for="{{ form.name.id_for_label }}" class="label">Service name <span class="text-rose-500">*</span></label>
+        {{ form.name }}
+        {% for error in form.name.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+      </div>
+      <div>
+        <label for="{{ form.description.id_for_label }}" class="label">Description</label>
+        {{ form.description }}
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label for="{{ form.base_price.id_for_label }}" class="label">Base price (₹)</label>
+          {{ form.base_price }}
+          {% for error in form.base_price.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+        </div>
+        <div class="hidden">
+          <label for="{{ form.default_slots.id_for_label }}" class="label">Author slots</label>
+          {{ form.default_slots }}
+          {% for error in form.default_slots.errors %}<p class="field-error">{% include 'tracker/_icon.html' with name='x-circle' cls='h-3.5 w-3.5' %} {{ error }}</p>{% endfor %}
+        </div>
+      </div>
+      <label class="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
+        {{ form.is_active }} Active in catalogue
+      </label>
+      <button type="submit" class="btn-primary w-full">
+        {% include 'tracker/_icon.html' with name='plus' cls='h-4.5 w-4.5' %} Add service
+      </button>
+    </form>
+  </aside>
+</div>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(function () {
+  'use strict';
+  document.addEventListener('click', function (e) {
+    var editBtn = e.target.closest('.svc-edit-btn');
+    if (editBtn) {
+      var row = document.getElementById('svc-edit-' + editBtn.dataset.svc);
+      if (!row) return;
+      var willShow = row.classList.contains('hidden');
+      document.querySelectorAll('.svc-edit-row:not(.hidden)').forEach(function (r) { r.classList.add('hidden'); });
+      document.querySelectorAll('.svc-edit-btn').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
+      row.classList.toggle('hidden', !willShow);
+      editBtn.setAttribute('aria-expanded', String(willShow));
+      if (willShow) {
+        var nameInput = row.querySelector('input[name$="-name"]');
+        if (nameInput) nameInput.focus();
+        row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      return;
+    }
+    var cancelBtn = e.target.closest('.svc-cancel-btn');
+    if (cancelBtn) {
+      var editRow = cancelBtn.closest('.svc-edit-row');
+      if (editRow) editRow.classList.add('hidden');
+    }
+  });
+})();
+</script>
+{% endblock %}

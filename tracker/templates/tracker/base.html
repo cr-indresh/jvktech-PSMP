@@ -1,0 +1,428 @@
+{% load static %}<!doctype html>
+{# ================================================================== #}
+{#  base.html -- LUXURY REDESIGN: JVK Technologies editorial theme    #}
+{#  Tailwind emerald→gold remap + Playfair Display + sharp corners    #}
+{#  ALL Django logic, JS helpers, IDs, and form fields preserved      #}
+{# ================================================================== #}
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{% block title %}Publication &amp; Payment Tracker{% endblock %} · JVK Technologies</title>
+
+  {# ---- Tailwind CSS (Play CDN) with LUXURY COLOR REMAP ------------ #}
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            serif: ['"Playfair Display"', 'Georgia', '"Times New Roman"', 'serif'],
+          },
+          spacing: { 4.5: '1.125rem', 5.5: '1.375rem' },
+          {# ---- EMERALD → GOLD (#C49A3A) palette remap ---- #}
+          {# Every emerald-* class across ALL templates now renders gold #}
+          colors: {
+            emerald: {
+              50:  '#FAF6ED',
+              100: '#F5EED9',
+              200: '#E8D9B0',
+              300: '#D4B865',
+              400: '#C49A3A',
+              500: '#C49A3A',
+              600: '#C49A3A',
+              700: '#8E6E1F',
+              800: '#6B521A',
+              900: '#4A3A14',
+              950: '#2A1F0A',
+            },
+            teal: {
+              50:  '#FAF6ED',
+              100: '#F5EED9',
+              200: '#E8D9B0',
+              300: '#D4B865',
+              400: '#C49A3A',
+              500: '#C49A3A',
+              600: '#C49A3A',
+              700: '#8E6E1F',
+              800: '#6B521A',
+              900: '#4A3A14',
+              950: '#2A1F0A',
+            },
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,500;1,600&display=swap" rel="stylesheet">
+
+  {# ---- Luxury component classes (compiled by the Tailwind CDN) ---- #}
+  <style type="text/tailwindcss">
+    .btn-primary   { @apply inline-flex items-center justify-center gap-2 rounded-none bg-[#111111] px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-white shadow-sm transition hover:bg-[#C49A3A] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C49A3A] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60; }
+    .btn-secondary { @apply inline-flex items-center justify-center gap-2 rounded-none border border-slate-300 bg-white px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-[#C49A3A] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C49A3A] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60; }
+    .btn-danger    { @apply inline-flex items-center justify-center gap-2 rounded-none border border-transparent px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-rose-600 transition hover:bg-rose-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 disabled:opacity-60; }
+    .input         { @apply w-full rounded-none border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm transition placeholder:text-slate-400 focus:border-[#C49A3A] focus:outline-none focus:ring-2 focus:ring-[#C49A3A]/20 disabled:bg-slate-100; }
+    .label         { @apply mb-1.5 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-600; }
+    .card          { @apply rounded-none border border-slate-200 bg-white shadow-[0_2px_8px_rgba(17,17,17,0.05)]; }
+    .badge         { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold; }
+    .th            { @apply whitespace-nowrap px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500; }
+    .td            { @apply whitespace-nowrap px-4 py-3 text-sm text-slate-700; }
+    .field-error   { @apply mt-1.5 flex items-center gap-1 text-xs font-medium text-rose-600; }
+    .nav-link      { @apply flex items-center gap-3 rounded-none px-3 py-2.5 text-sm font-medium text-slate-400 transition hover:bg-[#2a2a2a] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C49A3A]; }
+    .nav-link-active { @apply bg-[#2a2a2a] text-white shadow-sm hover:bg-[#2a2a2a] hover:text-white; }
+  </style>
+
+  {# ---- Custom luxury styles ---- #}
+  <style>
+    html { scroll-behavior: smooth; }
+    .scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+    .scroll-thin::-webkit-scrollbar-track { background: transparent; }
+    .scroll-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 0; }
+    .scroll-thin::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .scroll-thin { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+
+    {# Editorial heading style for dashboard page titles #}
+    main h1:not(.error-title):not(.login-h1) {
+      font-family: "Playfair Display", Georgia, serif !important;
+      font-weight: 600 !important;
+      letter-spacing: -0.02em !important;
+    }
+
+    {# Luxury link underline animation #}
+    .lux-link {
+      background-image: linear-gradient(#C49A3A, #C49A3A);
+      background-size: 0% 1px;
+      background-position: 0 100%;
+      background-repeat: no-repeat;
+      transition: background-size 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .lux-link:hover { background-size: 100% 1px; }
+
+    {# Card hover lift #}
+    .card-lift { transition: transform 0.4s cubic-bezier(0.22,1,0.36,1), box-shadow 0.4s ease; }
+    .card-lift:hover { transform: translateY(-2px); box-shadow: 0 8px 28px rgba(17,17,17,0.08); }
+
+    {# Scroll progress bar #}
+    .scroll-progress-lux {
+      position: fixed; top: 0; left: 0; height: 2px; width: 0%;
+      background: #C49A3A; z-index: 200; transition: width 0.08s linear;
+    }
+  </style>
+</head>
+
+<body class="flex min-h-screen flex-col bg-[#FAFAFA] font-sans text-slate-800 antialiased">
+
+  {# Scroll progress bar #}
+  <div class="scroll-progress-lux" id="scrollProgress" aria-hidden="true"></div>
+
+  {# ================= MAIN LAYOUT ROW ================= #}
+  <div class="flex flex-1">
+
+    {# ---- Sidebar backdrop (mobile drawer) ---- #}
+    {% if user.is_authenticated %}
+    <div id="sidebar-backdrop" class="fixed inset-0 z-40 hidden bg-[#111111]/50 backdrop-blur-sm lg:hidden" aria-hidden="true"></div>
+    {% endif %}
+
+    {% comment %} ================= LUXURY SIDEBAR =================
+       Dark ink sidebar with gold accents — editorial style.
+       Role-aware links preserved exactly. {% endcomment %}
+    {% if user.is_authenticated %}
+    <aside id="app-sidebar" class="fixed inset-y-0 left-0 z-50 flex w-72 -translate-x-full flex-col border-r border-[#2a2a2a] bg-[#111111] text-slate-300 transition-transform duration-300 ease-out lg:static lg:w-64 lg:translate-x-0" aria-label="Primary navigation">
+
+      {# ---- Brand ---- #}
+      <div class="flex items-center gap-3 border-b border-[#2a2a2a] px-5 py-5">
+        <img src="{% static 'tracker/jvk-logo.png' %}" alt="JVK Logo" class="h-10 w-10 object-contain">
+        <div class="min-w-0">
+          <p class="truncate font-serif text-base font-semibold leading-tight tracking-tight text-white">JVK Technologies</p>
+          <p class="truncate text-[10px] uppercase tracking-[0.2em] text-[#C49A3A]">Publication &amp; Sales Operations Management Portal</p>
+        </div>
+        <button id="sidebar-close-btn" type="button" class="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-none text-slate-400 transition hover:bg-[#2a2a2a] hover:text-white lg:hidden" aria-label="Close navigation menu">
+          {% include 'tracker/_icon.html' with name='x' %}
+        </button>
+      </div>
+
+      {# ---- Navigation ---- #}
+      <nav class="flex-1 space-y-1 overflow-y-auto scroll-thin px-3 py-4" aria-label="Main">
+        <p class="px-3 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Menu</p>
+
+        {% if app_role == 'ADMIN' or user.is_superuser %}
+          <a href="{% url 'tracker:admin_dashboard' %}{{ qp }}" class="nav-link {% if request.path == '/admin-panel/' %}nav-link-active{% endif %}">
+            {% include 'tracker/_icon.html' with name='layout-dashboard' %} Admin Dashboard
+          </a>
+          <a href="{% url 'tracker:team_management' %}{{ qp }}" class="nav-link {% if request.path == '/team/' %}nav-link-active{% endif %}">
+            {% include 'tracker/_icon.html' with name='users' %} Team Management
+          </a>
+          <a href="{% url 'tracker:service_catalog' %}{{ qp }}" class="nav-link {% if request.path == '/services/' %}nav-link-active{% endif %}" title="Publication categories: base prices + provisioned author slots">
+            {% include 'tracker/_icon.html' with name='book-open' %} Service Catalog
+          </a>
+          <a href="{% url 'tracker:audit_log' %}{{ qp }}" class="nav-link {% if request.path == '/audit/' %}nav-link-active{% endif %}" title="Audit trail of every critical operation (FTSD 7.0)">
+            {% include 'tracker/_icon.html' with name='file-text' %} Audit Trail
+          </a>
+          <a href="{% url 'tracker:accounts_dashboard' %}{{ qp }}" class="nav-link {% if request.path == '/accounts/' %}nav-link-active{% endif %}" title="Every Accounts action: verify / reject / revert payments and update publication status">
+            {% include 'tracker/_icon.html' with name='receipt' %} Accounts Workspace
+          </a>
+          <a href="{% url 'tracker:bde_dashboard' %}{{ qp }}" class="nav-link {% if request.path == '/bde/' %}nav-link-active{% endif %}" title="Your own sales workspace: create projects, book author slots and submit payments (every BDE action)">
+            {% include 'tracker/_icon.html' with name='briefcase' %} BDE Workspace
+          </a>
+
+          {# Read-only "view as" links into each BDE's sales dashboard. #}
+          {% if nav_bdes %}
+          <p class="px-3 pb-2 pt-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">BDE dashboards (view as)</p>
+          {% for bde in nav_bdes %}
+          <a href="{% url 'tracker:bde_dashboard' %}{% if qp %}{{ qp }}&amp;as={{ bde.pk }}{% else %}?as={{ bde.pk }}{% endif %}" class="nav-link" title="Read-only view of {{ bde.get_full_name|default:bde.username }}'s dashboard">
+            {% include 'tracker/_icon.html' with name='eye' cls='h-4.5 w-4.5' %}
+            <span class="truncate">{{ bde.get_full_name|default:bde.username }}</span>
+          </a>
+          {% endfor %}
+          {% endif %}
+        {% elif app_role == 'ACCOUNTS' %}
+          <a href="{% url 'tracker:accounts_dashboard' %}{{ qp }}" class="nav-link {% if request.path == '/accounts/' %}nav-link-active{% endif %}">
+            {% include 'tracker/_icon.html' with name='receipt' %} Accounts Dashboard
+          </a>
+        {% else %}
+          <a href="{% url 'tracker:bde_dashboard' %}{{ qp }}" class="nav-link {% if request.path == '/bde/' %}nav-link-active{% endif %}">
+            {% include 'tracker/_icon.html' with name='briefcase' %} BDE Dashboard
+          </a>
+        {% endif %}
+
+        {% comment %} ================= ON THIS PAGE ================= {% endcomment %}
+        {% if app_role == 'BDE' and request.path == '/bde/' %}
+          <p class="px-3 pb-2 pt-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">On this page</p>
+          <a href="#overview" class="nav-link pl-6 text-[13px]">{% include 'tracker/_icon.html' with name='trending-up' cls='h-4 w-4' %} Overview</a>
+          <a href="#create-project" class="nav-link pl-6 text-[13px]">{% include 'tracker/_icon.html' with name='plus' cls='h-4 w-4' %} Create project</a>
+          <a href="#my-projects" class="nav-link pl-6 text-[13px]">{% include 'tracker/_icon.html' with name='briefcase' cls='h-4 w-4' %} My projects</a>
+        {% elif app_role == 'ACCOUNTS' and request.path == '/accounts/' %}
+          <p class="px-3 pb-2 pt-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">On this page</p>
+          <a href="#overview" class="nav-link pl-6 text-[13px]">{% include 'tracker/_icon.html' with name='trending-up' cls='h-4 w-4' %} Overview</a>
+          <a href="#pending-payments" class="nav-link pl-6 text-[13px]">{% include 'tracker/_icon.html' with name='clock' cls='h-4 w-4' %} Pending payments</a>
+          <a href="#verified-payments" class="nav-link pl-6 text-[13px]">{% include 'tracker/_icon.html' with name='check-circle' cls='h-4 w-4' %} Verified payments</a>
+          <a href="#publication-status" class="nav-link pl-6 text-[13px]">{% include 'tracker/_icon.html' with name='link' cls='h-4 w-4' %} Publication status</a>
+        {% endif %}
+
+        <p class="px-3 pb-2 pt-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Security</p>
+        <div class="mx-3 border border-[#C49A3A]/20 bg-[#C49A3A]/5 p-3 text-xs leading-relaxed text-[#C49A3A]/80">
+          <span class="mb-1 flex items-center gap-1.5 font-semibold text-[#C49A3A]">{% include 'tracker/_icon.html' with name='shield' cls='h-3.5 w-3.5' %} Protected session</span>
+          {% if app_role == 'ADMIN' %}
+            Remote access allowed for admins.
+          {% else %}
+            Office IP whitelist active.
+          {% endif %}
+        </div>
+      </nav>
+    </aside>
+    {% endif %}
+
+    {# ================= CONTENT COLUMN ================= #}
+    <div class="flex min-w-0 flex-1 flex-col">
+
+      {% if user.is_authenticated %}
+      <header class="sticky top-0 z-30 border-b border-slate-200 bg-[#FAFAFA]/85 backdrop-blur-lg">
+        <div class="flex items-center justify-between gap-3 px-4 py-2.5 sm:px-6">
+
+          {# ---- left: mobile nav + brand / desktop session pill ---- #}
+          <div class="flex min-w-0 items-center gap-2">
+            <button id="sidebar-open-btn" type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-none text-slate-600 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C49A3A] lg:hidden" aria-label="Open navigation menu" aria-controls="app-sidebar" aria-expanded="false">
+              {% include 'tracker/_icon.html' with name='menu' cls='h-6 w-6' %}
+            </button>
+            <a href="{% url 'tracker:dashboard' %}{{ qp }}" class="flex items-center gap-2 lg:hidden">
+              <img src="{% static 'tracker/jvk-logo.png' %}" alt="JVK Logo" class="h-8 w-8 object-contain">
+              <span class="font-serif text-base font-semibold tracking-tight text-slate-900">JVK Technologies</span>
+            </a>
+            <span class="badge hidden bg-[#FAF6ED] text-[#8E6E1F] ring-1 ring-inset ring-[#C49A3A]/20 lg:inline-flex">{% include 'tracker/_icon.html' with name='shield' cls='h-3.5 w-3.5' %} {% if app_role == 'ADMIN' %}Admin session — remote access{% else %}Office-IP protected session{% endif %}</span>
+          </div>
+
+          {# ---- right: profile chip + sign out ---- #}
+          <div class="flex shrink-0 items-center gap-2 sm:gap-3">
+            <div class="flex min-w-0 items-center gap-2.5" title="Signed in as {{ user.get_full_name|default:user.username }}">
+              <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#C49A3A]/10 text-sm font-bold text-[#8E6E1F] ring-1 ring-inset ring-[#C49A3A]/20">{% if user.first_name and user.last_name %}{{ user.first_name|first|upper }}{{ user.last_name|first|upper }}{% elif user.first_name %}{{ user.first_name|first|upper }}{% else %}{{ user.username|first|upper }}{% endif %}</span>
+              <div class="hidden min-w-0 text-left sm:block">
+                <p class="truncate text-sm font-semibold leading-tight text-slate-800">{{ user.get_full_name|default:user.username }}</p>
+                <p class="truncate text-[11px] leading-tight text-slate-500">{{ app_role|default:'User' }}{% if user.is_superuser and app_role != 'ADMIN' %} · superuser{% endif %}</p>
+              </div>
+            </div>
+            <div class="hidden h-6 w-px bg-slate-200 sm:block" aria-hidden="true"></div>
+            <form method="post" action="{% url 'tracker:logout' %}{{ qp }}" class="shrink-0">
+              {% csrf_token %}
+              <button type="submit" aria-label="Sign out" class="inline-flex h-9 items-center gap-2 border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400">
+                {% include 'tracker/_icon.html' with name='logout' cls='h-4 w-4' %}
+                <span class="hidden sm:inline">Sign out</span>
+              </button>
+            </form>
+          </div>
+        </div>
+      </header>
+      {% endif %}
+
+      <main class="flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+
+        {# ---- Django messages as dismissible banners ---- #}
+        {% if messages %}
+        <div class="mb-6 space-y-3" id="django-messages" role="status" aria-live="polite">
+          {% for message in messages %}
+            {% if message.tags == 'success' %}
+              <div class="flex items-start gap-3 border border-[#C49A3A]/20 bg-[#FAF6ED] px-4 py-3 text-sm text-[#8E6E1F] shadow-sm">
+                {% include 'tracker/_icon.html' with name='check-circle' cls='h-5 w-5 shrink-0' %}
+                <p class="flex-1">{{ message }}</p>
+                <button type="button" class="msg-dismiss -m-1 rounded p-1 text-[#C49A3A] transition hover:bg-[#C49A3A]/10" aria-label="Dismiss">&times;</button>
+              </div>
+            {% elif message.tags == 'error' %}
+              <div class="flex items-start gap-3 border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 shadow-sm">
+                {% include 'tracker/_icon.html' with name='alert-triangle' cls='h-5 w-5 shrink-0' %}
+                <p class="flex-1">{{ message }}</p>
+                <button type="button" class="msg-dismiss -m-1 rounded p-1 text-rose-600 transition hover:bg-rose-100" aria-label="Dismiss">&times;</button>
+              </div>
+            {% else %}
+              <div class="flex items-start gap-3 border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
+                {% include 'tracker/_icon.html' with name='alert-triangle' cls='h-5 w-5 shrink-0 text-slate-400' %}
+                <p class="flex-1">{{ message }}</p>
+                <button type="button" class="msg-dismiss -m-1 rounded p-1 text-slate-500 transition hover:bg-slate-100" aria-label="Dismiss">&times;</button>
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+      </main>
+
+      {# ================= LUXURY FOOTER ================= #}
+      <footer class="mt-auto border-t border-slate-200 bg-white px-4 py-5 pb-[calc(1rem+env(safe-area-inset-bottom))] text-center text-xs text-slate-500 sm:px-6">
+        <div class="mx-auto max-w-4xl">
+          <div class="mb-2 flex items-center justify-center gap-2">
+            <span class="h-px w-12 bg-[#C49A3A]/30"></span>
+            <span class="font-serif text-sm font-medium text-slate-800">JVK Technologies</span>
+            <span class="h-px w-12 bg-[#C49A3A]/30"></span>
+          </div>
+          <p>Publication &amp; Sales Operations Management Portal — Django 5 PoC</p>
+          <p class="mt-0.5">Roles: BDE → Accounts → Admin · Office-IP security middleware active</p>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  {# ================= TOAST STACK ================= #}
+  <div id="toast-stack" class="pointer-events-none fixed bottom-5 right-5 z-[60] flex w-[min(92vw,360px)] flex-col gap-2" aria-live="polite"></div>
+
+  {# ================= SHARED JAVASCRIPT (PRESERVED EXACTLY) ================= #}
+  <script>
+    /* ---------- Scroll progress bar ---------- */
+    (function () {
+      const bar = document.getElementById('scrollProgress');
+      if (!bar) return;
+      const update = function () {
+        const h = document.documentElement.scrollHeight - window.innerHeight;
+        const pct = h > 0 ? (window.scrollY / h) * 100 : 0;
+        bar.style.width = Math.min(100, Math.max(0, pct)) + '%';
+      };
+      update();
+      window.addEventListener('scroll', update, { passive: true });
+      window.addEventListener('resize', update);
+    })();
+
+    /* ---------- Mobile sidebar drawer ---------- */
+    (function () {
+      const sidebar = document.getElementById('app-sidebar');
+      const backdrop = document.getElementById('sidebar-backdrop');
+      const openBtn = document.getElementById('sidebar-open-btn');
+      const closeBtn = document.getElementById('sidebar-close-btn');
+      if (!sidebar) return;
+
+      function setDrawer(open) {
+        sidebar.classList.toggle('-translate-x-full', !open);
+        if (backdrop) backdrop.classList.toggle('hidden', !open);
+        if (openBtn) openBtn.setAttribute('aria-expanded', String(open));
+        document.body.style.overflow = open ? 'hidden' : '';
+      }
+      if (openBtn) openBtn.addEventListener('click', () => setDrawer(true));
+      if (closeBtn) closeBtn.addEventListener('click', () => setDrawer(false));
+      if (backdrop) backdrop.addEventListener('click', () => setDrawer(false));
+      sidebar.querySelectorAll('a[href^="#"]').forEach(function (a) {
+        a.addEventListener('click', function () { setDrawer(false); });
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !sidebar.classList.contains('-translate-x-full')) setDrawer(false);
+      });
+    })();
+
+    /* ---------- Toast notifications ---------- */
+    window.showToast = function (message, type = 'success') {
+      const stack = document.getElementById('toast-stack');
+      if (!stack) return;
+      const palette = {
+        success: 'border-[#C49A3A]/20 bg-[#FAF6ED] text-[#8E6E1F]',
+        error:   'border-rose-200 bg-rose-50 text-rose-800',
+        warn:    'border-amber-200 bg-amber-50 text-amber-800',
+        info:    'border-slate-200 bg-white text-slate-700',
+      }[type] || 'border-slate-200 bg-white text-slate-700';
+      const el = document.createElement('div');
+      el.className = 'pointer-events-auto flex items-start gap-2.5 border px-4 py-3 text-sm shadow-lg shadow-slate-900/5 transition-opacity duration-300 ' + palette;
+      el.setAttribute('role', 'alert');
+      el.innerHTML = '<p class="flex-1"></p><button type="button" class="-m-1 rounded p-1 opacity-60 transition hover:opacity-100" aria-label="Dismiss">&times;</button>';
+      el.querySelector('p').textContent = message;
+      el.querySelector('button').addEventListener('click', () => dismiss());
+      stack.appendChild(el);
+
+      let timer = null;
+      function dismiss() {
+        if (timer) clearTimeout(timer);
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 320);
+      }
+      timer = setTimeout(dismiss, 4200);
+    };
+
+    /* ---------- CSRF helper for fetch() ---------- */
+    window.getCookie = function (name) {
+      const row = document.cookie.split('; ').find(r => r.startsWith(name + '='));
+      return row ? decodeURIComponent(row.split('=').slice(1).join('=')) : null;
+    };
+    window.getCsrfToken = function () {
+      const meta = document.querySelector('meta[name="csrf-token"]');
+      if (meta && meta.content) return meta.content;
+      const rows = document.cookie.split('; ').filter(r => r.startsWith('csrftoken='));
+      return rows.length ? decodeURIComponent(rows[rows.length - 1].split('=').slice(1).join('=')) : '';
+    };
+    window.apiPost = async function (url, body) {
+      const res = await fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-CSRFToken': window.getCsrfToken(),
+        },
+        body: JSON.stringify(body || {}),
+      });
+      let data = {};
+      try { data = await res.json(); } catch (_) { }
+      if (!res.ok) {
+        const hint = res.status === 403
+          ? 'Your security token expired — reload the page and try again.'
+          : '';
+        throw new Error(data.error || (hint || ('Request failed (' + res.status + ')')));
+      }
+      return data;
+    };
+
+    /* ---------- Django message banner dismiss ---------- */
+    document.querySelectorAll('.msg-dismiss').forEach(function (btn) {
+      const banner = btn.closest('div.flex');
+      btn.addEventListener('click', function () { banner.remove(); });
+      setTimeout(function () {
+        if (banner.parentElement) {
+          banner.style.transition = 'opacity 0.3s ease';
+          banner.style.opacity = '0';
+          setTimeout(() => banner.remove(), 300);
+        }
+      }, 5000);
+    });
+  </script>
+
+  {% block page_scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,39 @@
+{% extends 'tracker/base.html' %}
+{% comment %} 404.html -- LUXURY REDESIGN: friendly "page not found" card
+with editorial typography and gold accents. All Django logic preserved. {% endcomment %}
+{% block title %}Page not found{% endblock %}
+
+{% block content %}
+<div class="flex min-h-[60vh] items-center justify-center">
+  <div class="card max-w-lg overflow-hidden">
+    <div class="flex items-center gap-3 border-b border-slate-200 bg-[#FAF6ED] px-6 py-5">
+      <span class="flex h-11 w-11 shrink-0 items-center justify-center bg-[#C49A3A] text-white">
+        {% include 'tracker/_icon.html' with name='search' cls='h-5 w-5' %}
+      </span>
+      <div>
+        <h1 class="error-title font-serif text-xl font-semibold tracking-tight text-[#8E6E1F]">404 — Page not found</h1>
+        <p class="text-sm text-[#8E6E1F]/70">This link no longer leads anywhere.</p>
+      </div>
+    </div>
+
+    <div class="space-y-4 px-6 py-6 text-sm leading-relaxed text-slate-700">
+      <p class="font-medium text-slate-900">{{ notfound_message|default:'The record or page you are looking for could not be found — it may have been deleted, or the link you followed is out of date.' }}</p>
+
+      <div class="border border-slate-200 bg-[#FAFAFA] p-4">
+        <p class="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+          {% include 'tracker/_icon.html' with name='map-pin' cls='h-3.5 w-3.5' %} What to do next
+        </p>
+        <p>The lists on your dashboard always show the current records — start from there if a bookmark or an old page brought you here.</p>
+      </div>
+
+      <div class="flex flex-wrap gap-3 pt-1">
+        {% if user.is_authenticated %}
+          <a href="{% url 'tracker:dashboard' %}{{ qp }}" class="btn-primary">{% include 'tracker/_icon.html' with name='layout-dashboard' cls='h-4.5 w-4.5' %} Back to my dashboard</a>
+        {% else %}
+          <a href="{% url 'tracker:login' %}{{ qp }}" class="btn-primary">{% include 'tracker/_icon.html' with name='logout' cls='h-4.5 w-4.5 rotate-180' %} Go to sign in</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

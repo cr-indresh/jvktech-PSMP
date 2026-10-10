@@ -1,0 +1,6 @@
+django>=5.1,<6.0
+# Field-level encryption (phones + UTRs) is implemented with the Python
+# standard library only (SHA-256-CTR keystream + HMAC-SHA256) -- no
+# third-party crypto package is required. `cryptography` is OPTIONAL and
+# only used to read legacy `enc::gAAAA...` Fernet tokens from databases
+# written by older versions of this PoC.
